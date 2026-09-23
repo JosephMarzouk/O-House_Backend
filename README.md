@@ -14,8 +14,8 @@ the database password:
 ```bash
 npx supabase login
 npx supabase link --project-ref ptonujazlljpkgpfrkpw
-npx supabase migration fetch      # pulls migrations already applied through the MCP
 npx supabase db pull              # writes <timestamp>_remote_schema.sql = the live schema
+                                  # (20260923105225_restore_role_guards is already applied and matches)
 npx supabase migration list       # local and remote must match
 ```
 
