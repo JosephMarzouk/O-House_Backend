@@ -13,6 +13,7 @@ const club = (slug: string, ref: string): Club => ({
   secretKey: 'sk',
   gatewayKey: 'gk',
   bucket: 'checklist-media',
+  hosts: [],
 });
 const A = club('a', 'aaaa');
 const B = club('b', 'bbbb');

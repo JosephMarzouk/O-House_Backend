@@ -18,6 +18,8 @@ export interface Club {
   secretKey: string;
   gatewayKey: string;
   bucket: string;
+  /** Extra portal hosts, e.g. a club's own domain. <slug>.<PORTAL_DOMAIN> always works. */
+  hosts: string[];
 }
 
 /** The fields safe to hand to an unauthenticated phone or browser. */
@@ -58,10 +60,28 @@ export function parseClubs(raw: string | undefined): Map<string, Club> {
       secretKey: c.secretKey!,
       gatewayKey: c.gatewayKey!,
       bucket: c.bucket!,
+      hosts: Array.isArray(c.hosts) ? c.hosts.map((h) => String(h).toLowerCase()) : [],
     });
   }
   if (clubs.size === 0) throw new Error('CLUBS has no clubs');
   return clubs;
+}
+
+/**
+ * Which club a portal host belongs to: a listed custom domain first, then
+ * <slug>.<portalDomain>. Anything else is no club — a host pointed at the
+ * portal that we did not configure must not borrow a club's login page.
+ */
+export function clubForHost(clubs: Iterable<Club>, host: string, portalDomain: string | undefined): Club | undefined {
+  const h = host.toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
+  const all = [...clubs];
+  const custom = all.find((c) => c.hosts.includes(h));
+  if (custom) return custom;
+  if (!portalDomain) return undefined;
+  const suffix = `.${portalDomain.toLowerCase()}`;
+  if (!h.endsWith(suffix)) return undefined;
+  const slug = h.slice(0, -suffix.length);
+  return all.find((c) => c.slug === slug);
 }
 
 export function toPublic(c: Club): PublicClub {

@@ -1,4 +1,4 @@
-import { parseClubs, toPublic } from './clubs';
+import { clubForHost, parseClubs, toPublic } from './clubs';
 
 const entry = {
   code: 'ohouse',
@@ -37,5 +37,26 @@ describe('parseClubs', () => {
   it('the public view carries no secret', () => {
     const pub = JSON.stringify(toPublic(parseClubs(JSON.stringify({ ohouse: entry })).get('ohouse')!));
     expect(pub).not.toContain('TOP');
+  });
+});
+
+describe('clubForHost', () => {
+  const clubs = [...parseClubs(JSON.stringify({ ohouse: entry, clubb: { ...entry, code: 'B', hosts: ['portal.clubb.com'] } })).values()];
+
+  it('maps <slug>.<portal domain> to its club, ignoring case, port and a trailing dot', () => {
+    expect(clubForHost(clubs, 'ohouse.rounds.app', 'rounds.app')?.slug).toBe('ohouse');
+    expect(clubForHost(clubs, 'OHOUSE.Rounds.App:443', 'rounds.app')?.slug).toBe('ohouse');
+    expect(clubForHost(clubs, 'ohouse.rounds.app.', 'rounds.app')?.slug).toBe('ohouse');
+  });
+
+  it("maps a club's own domain", () => {
+    expect(clubForHost(clubs, 'portal.clubb.com', 'rounds.app')?.slug).toBe('clubb');
+  });
+
+  it('refuses anything not configured', () => {
+    expect(clubForHost(clubs, 'nope.rounds.app', 'rounds.app')).toBeUndefined();
+    expect(clubForHost(clubs, 'ohouse.evil.com', 'rounds.app')).toBeUndefined(); // wrong domain
+    expect(clubForHost(clubs, 'x.ohouse.rounds.app', 'rounds.app')).toBeUndefined(); // no nesting
+    expect(clubForHost(clubs, 'ohouse.rounds.app', undefined)).toBeUndefined(); // no PORTAL_DOMAIN set
   });
 });
