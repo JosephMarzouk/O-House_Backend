@@ -21,13 +21,13 @@ The O House backend (NestJS), and the **only** home for database migrations.
 |---|---|
 | `GET /health` | Public; Railway's health check |
 | `GET /clubs/host/:host` | Public; the portal: which club a host belongs to. (The staff app needs no lookup: each club has its own app build.) |
-| `GET /me` | The signed-in profile (no phone) and the club's branding |
+| `GET /me` | The signed-in profile (no phone), the club's branding, and `pages`: the About / Policies text an admin writes in the portal (`club_pages`) |
 | `GET /assignments` | The phone's offline set: the last 7 days (Cairo), every future date, open follow-ups. Items included, paged past PostgREST's 1000-row cap. |
 | `GET /assignments/:id` | One round, if RLS lets you see it, plus signed links (1 h) for its photos and signature |
 | `POST /assignments/:id/items/:itemId/answer` | `{answer?, note?}` → `mark_item_done` |
 | `POST /assignments/:id/items/:itemId/photos` | Multipart `file` (JPEG, ≤ 5 MB) + `photoId` (uuid). The API stores it at `photos/{id}/{itemId}-{photoId}.jpg`, then `attach_item_photo` |
 | `POST /assignments/:id/submit` | Multipart `file` (PNG, ≤ 1 MB), `signatureId`, `completedAt` (ISO-8601 **with offset**), `note?` → `submit_assignment` |
-| `PATCH /me/locale` · `POST /me/password-changed` | `set_locale` · `complete_password_change` |
+| `PATCH /me/locale` | `set_locale`. (No password route: staff never change their password in the app; only an admin sets it, in the portal.) |
 | `POST /sync/refusals` | `{op, code, message?, assignmentId?, itemId?}`: a refusal the phone decided itself (e.g. a purged file) |
 
 **Writes.** Send an `Idempotency-Key` (uuid, fixed when the op was queued). Repeats are harmless: the
