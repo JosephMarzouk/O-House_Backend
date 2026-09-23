@@ -1,5 +1,5 @@
-import { cairoDate, fetchAll } from './assignments.module';
-import { toBucketPath } from '../media/media.module';
+import { cairoDate, completedAt, evidence, fetchAll, optionalText } from './assignments.module';
+import { photoPath, signaturePath, toBucketPath } from '../media/media.module';
 
 describe('toBucketPath', () => {
   const B = 'checklist-media';
@@ -38,5 +38,48 @@ describe('fetchAll', () => {
 
   it('turns an upstream error into an UpstreamError', async () => {
     await expect(fetchAll(async () => ({ data: null, error: { message: 'boom' } }))).rejects.toThrow('boom');
+  });
+});
+
+describe('evidence paths are derived by the API from ids fixed at capture', () => {
+  it('a repeat upload of the same capture writes the same object', () => {
+    expect(photoPath('a1', 'i1', 'p1')).toBe('photos/a1/i1-p1.jpg');
+    expect(signaturePath('a1', 's1')).toBe('signatures/a1-s1.png');
+  });
+});
+
+describe('phone input: an app bug is refused (parked), never retried forever', () => {
+  const code = (f: () => unknown) => {
+    try {
+      f();
+    } catch (e: any) {
+      return e.getStatus() === 422 && e.getResponse().refused ? e.getResponse().code : 'NOT_A_REFUSAL';
+    }
+    return null;
+  };
+
+  it('completedAt must carry an offset (SY-7)', () => {
+    expect(completedAt('2026-09-23T14:05:00+03:00')).toBe('2026-09-23T14:05:00+03:00');
+    expect(completedAt('2026-09-23T11:05:00.123Z')).toBe('2026-09-23T11:05:00.123Z');
+    expect(code(() => completedAt('2026-09-23T14:05:00'))).toBe('INVALID_FIELD'); // local time: ambiguous
+    expect(code(() => completedAt('yesterday'))).toBe('INVALID_FIELD');
+    expect(code(() => completedAt(undefined))).toBe('INVALID_FIELD');
+  });
+
+  it('files are checked by their first bytes', () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1]);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]);
+    expect(evidence({ buffer: jpeg, size: 5 }, 'jpeg')).toBe(jpeg);
+    expect(evidence({ buffer: png, size: 5 }, 'png')).toBe(png);
+    expect(code(() => evidence({ buffer: png, size: 5 }, 'jpeg'))).toBe('INVALID_FILE');
+    expect(code(() => evidence(undefined, 'png'))).toBe('INVALID_FILE');
+  });
+
+  it('notes and answers are optional text', () => {
+    expect(optionalText(undefined, 'note')).toBeNull();
+    expect(optionalText(null, 'note')).toBeNull();
+    expect(optionalText('Tap was leaking', 'note')).toBe('Tap was leaking');
+    expect(code(() => optionalText(42, 'answer'))).toBe('INVALID_FIELD');
+    expect(code(() => optionalText('x'.repeat(2001), 'note'))).toBe('INVALID_FIELD');
   });
 });

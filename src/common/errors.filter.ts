@@ -1,5 +1,16 @@
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common';
-import type { Response } from 'express';
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpException,
+  Injectable,
+  Logger,
+  ParseUUIDPipe,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { SupabaseService } from '../supabase/supabase.module';
+import type { CurrentUser } from '../auth/current-user';
 import { UpstreamError } from './upstream';
 
 /**
@@ -27,6 +38,7 @@ const REFUSALS: ReadonlyArray<[needle: string, code: string]> = [
   ['Item not found', 'ITEM_NOT_FOUND'],
   ['Not authorized', 'NOT_AUTHORIZED'],
   ['Assignment is closed', 'ASSIGNMENT_CLOSED'],
+  ['Invalid locale', 'INVALID_FIELD'], // set_locale
 ];
 
 export function classifyRefusal(message: string): string | null {
@@ -34,16 +46,40 @@ export function classifyRefusal(message: string): string | null {
   return null;
 }
 
+/** A refusal the API decides itself: a field the app controls is invalid. The phone parks the op. */
+export function refused(code: string, message: string): UnprocessableEntityException {
+  return new UnprocessableEntityException({ refused: true, code, message });
+}
+
+/** A uuid in the path of a phone write. Malformed, it can never succeed: refused, not 400 (which retries). */
+export const Uuid = new ParseUUIDPipe({ exceptionFactory: () => refused('INVALID_FIELD', 'Not a uuid') });
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
+
+type Req = Request & { user?: CurrentUser };
+
+@Injectable()
 @Catch()
 export class ErrorsFilter implements ExceptionFilter {
   private readonly log = new Logger('Errors');
 
-  catch(e: unknown, host: ArgumentsHost): void {
-    const res = host.switchToHttp().getResponse<Response>();
+  constructor(private readonly supabase: SupabaseService) {}
 
-    // Our own decisions (401, 403, 404, 429, 422 validation): passed through.
+  catch(e: unknown, host: ArgumentsHost): void {
+    const http = host.switchToHttp();
+    const res = http.getResponse<Response>();
+    const req = http.getRequest<Req>();
+
+    // An oversized upload (multer's limit) is the app's to fix, not a fault to retry.
+    if (e instanceof HttpException && e.getStatus() === 413) e = refused('FILE_TOO_LARGE', 'File is too large');
+
+    // Our own decisions (401, 403, 404, 429, 422 refused): passed through.
     if (e instanceof HttpException) {
       const body = e.getResponse();
+      if (typeof body === 'object' && (body as { refused?: boolean }).refused) {
+        this.record(req, body as { code: string; message: string });
+      }
       res.status(e.getStatus()).json(typeof body === 'string' ? { code: 'ERROR', message: body } : body);
       return;
     }
@@ -51,6 +87,7 @@ export class ErrorsFilter implements ExceptionFilter {
     if (e instanceof UpstreamError) {
       const code = classifyRefusal(e.message);
       if (code) {
+        this.record(req, { code, message: e.message });
         res.status(422).json({ refused: true, code, message: e.message });
         return;
       }
@@ -58,7 +95,36 @@ export class ErrorsFilter implements ExceptionFilter {
 
     // Unrecognised: logged in full here, never shown to the client, and
     // retryable by contract.
-    this.log.error(e instanceof Error ? (e.stack ?? e.message) : String(e));
+    const key = req.header('idempotency-key');
+    const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
+    this.log.error(`${req.method} ${req.path}${key ? ` [${key}]` : ''}: ${detail}`);
     res.status(503).json({ code: 'UNAVAILABLE', message: 'Temporarily unavailable, retry later' });
+  }
+
+  /**
+   * Every refusal a phone gets lands in sync_refusals, so a supervisor sees it
+   * (SY-10). Written as the user, and fire and forget: the phone parks the op
+   * either way, and a failed log must never turn a 422 into a retry.
+   */
+  private record(req: Req, r: { code: string; message: string }): void {
+    const user = req.user;
+    if (!user) return;
+    const { id, itemId } = (req.params ?? {}) as Record<string, string | undefined>;
+    const key = req.header('idempotency-key');
+    this.log.warn(`refused ${req.method} ${req.path}${key ? ` [${key}]` : ''}: ${r.code}`);
+    void this.supabase
+      .forUser(user.club, user.jwt)
+      .rpc('record_sync_refusal', {
+        p_op: req.path.split('/').pop() || req.path, // answer | photos | submit | locale
+        p_code: r.code,
+        p_message: r.message,
+        p_assignment_id: isUuid(id) ? id : null,
+        p_item_id: isUuid(itemId) ? itemId : null,
+        p_idempotency_key: isUuid(key) ? key : null,
+      })
+      .then(
+        ({ error }) => error && this.log.warn(`record_sync_refusal: ${error.message}`),
+        (err: unknown) => this.log.warn(`record_sync_refusal: ${String(err)}`),
+      );
   }
 }

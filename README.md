@@ -24,6 +24,17 @@ The O House backend (NestJS), and the **only** home for database migrations.
 | `GET /me` | The signed-in profile (no phone) and the club's branding |
 | `GET /assignments` | The phone's offline set: the last 7 days (Cairo), every future date, open follow-ups. Items included, paged past PostgREST's 1000-row cap. |
 | `GET /assignments/:id` | One round, if RLS lets you see it, plus signed links (1 h) for its photos and signature |
+| `POST /assignments/:id/items/:itemId/answer` | `{answer?, note?}` → `mark_item_done` |
+| `POST /assignments/:id/items/:itemId/photos` | Multipart `file` (JPEG, ≤ 5 MB) + `photoId` (uuid). The API stores it at `photos/{id}/{itemId}-{photoId}.jpg`, then `attach_item_photo` |
+| `POST /assignments/:id/submit` | Multipart `file` (PNG, ≤ 1 MB), `signatureId`, `completedAt` (ISO-8601 **with offset**), `note?` → `submit_assignment` |
+| `PATCH /me/locale` · `POST /me/password-changed` | `set_locale` · `complete_password_change` |
+| `POST /sync/refusals` | `{op, code, message?, assignmentId?, itemId?}`: a refusal the phone decided itself (e.g. a purged file) |
+
+**Writes.** Send an `Idempotency-Key` (uuid, fixed when the op was queued). Repeats are harmless: the
+evidence path comes from ids fixed at capture, and the RPCs ignore work they already have. Every 422
+is recorded in `sync_refusals` (the user's own, their manager's reports, admins all), keyed by that
+header so a retried refusal is recorded once. Photo and signature uploads use the secret key only after
+reading the round as the user and checking they are its assignee.
 
 ## Run
 

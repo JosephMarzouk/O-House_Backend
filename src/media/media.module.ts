@@ -65,7 +65,26 @@ export class MediaService {
     for (const s of data) if (s.path && s.signedUrl && !s.error) out[s.path] = s.signedUrl;
     return out; // a missing object is simply absent: the client shows its placeholder
   }
+
+  /**
+   * Writes evidence with the secret key. Same rule as sign(): the caller has
+   * already read the round as the user and checked they are its assignee.
+   * upsert, because a replayed upload (a lost response) writes the same path.
+   */
+  async upload(club: Club, path: string, bytes: Buffer, contentType: string): Promise<void> {
+    const { error } = await this.system
+      .for(club)
+      .storage.from(club.bucket)
+      .upload(path, bytes, { contentType, upsert: true });
+    if (error) throw new UpstreamError(error.message);
+  }
 }
+
+/** Where evidence lives. The API derives it; the phone only supplies the ids it fixed at capture. */
+export const photoPath = (assignmentId: string, itemId: string, photoId: string) =>
+  `photos/${assignmentId}/${itemId}-${photoId}.jpg`;
+export const signaturePath = (assignmentId: string, signatureId: string) =>
+  `signatures/${assignmentId}-${signatureId}.png`;
 
 @Module({ providers: [SystemClients, MediaService], exports: [MediaService] })
 export class MediaModule {}

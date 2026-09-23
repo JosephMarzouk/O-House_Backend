@@ -1,5 +1,5 @@
 import { Injectable, Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ClubsModule } from './clubs/clubs.module';
 import { SupabaseModule } from './supabase/supabase.module';
@@ -7,6 +7,8 @@ import { AuthGuard } from './auth/auth.guard';
 import { MeModule } from './me/me.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { HealthController } from './health/health.controller';
+import { SyncModule } from './sync/sync.module';
+import { ErrorsFilter } from './common/errors.filter';
 
 /**
  * Runs after AuthGuard, so it counts per club and user. That matters: a
@@ -30,11 +32,13 @@ class UserThrottlerGuard extends ThrottlerGuard {
     SupabaseModule,
     MeModule,
     AssignmentsModule,
+    SyncModule,
   ],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard }, // order matters: auth first
     { provide: APP_GUARD, useClass: UserThrottlerGuard },
+    { provide: APP_FILTER, useClass: ErrorsFilter }, // the refusal contract; records refusals
   ],
 })
 export class AppModule {}
