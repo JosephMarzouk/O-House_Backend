@@ -18,11 +18,6 @@ export class ClubsService {
     return clubForHost(this.bySlugMap.values(), host, process.env.PORTAL_DOMAIN);
   }
 
-  byCode(code: string): Club | undefined {
-    const wanted = code.toUpperCase();
-    for (const c of this.bySlugMap.values()) if (c.code === wanted) return c;
-    return undefined;
-  }
 }
 
 @Controller('clubs')
@@ -38,14 +33,6 @@ export class ClubsController {
     return toPublic(club);
   }
 
-  /** First launch of the app: a club code becomes that club's connection details and branding. */
-  @Public()
-  @Get(':code')
-  get(@Param('code') code: string): PublicClub {
-    const club = this.clubs.byCode(code);
-    if (!club) throw new NotFoundException({ code: 'UNKNOWN_CLUB', message: 'No club with that code' });
-    return toPublic(club);
-  }
 }
 
 @Global()

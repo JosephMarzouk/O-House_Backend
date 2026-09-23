@@ -20,7 +20,7 @@ The O House backend (NestJS), and the **only** home for database migrations.
 | Route | |
 |---|---|
 | `GET /health` | Public; Railway's health check |
-| `GET /clubs/:code` | Public; a club code becomes that club's connection details and branding |
+| `GET /clubs/host/:host` | Public; the portal: which club a host belongs to. (The staff app needs no lookup: each club has its own app build.) |
 | `GET /me` | The signed-in profile (no phone) and the club's branding |
 | `GET /assignments` | The phone's offline set: the last 7 days (Cairo), every future date, open follow-ups. Items included, paged past PostgREST's 1000-row cap. |
 | `GET /assignments/:id` | One round, if RLS lets you see it, plus signed links (1 h) for its photos and signature |
