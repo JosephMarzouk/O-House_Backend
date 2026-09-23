@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/main.js",
     "dev": "tsc -p tsconfig.build.json --watch & node --watch dist/main.js",
-    "test": "jest"
+    "test": "jest",
+    "start:local": "pnpm build && node --env-file=.env dist/main.js"
   },
   "jest": {
     "testEnvironment": "node",
