@@ -12,7 +12,9 @@ async function bootstrap() {
   app.useGlobalFilters(new ErrorsFilter());
   app.enableShutdownHooks();
   // No CORS: no browser calls this API. The portal calls it server to server.
-  await app.listen(Number(process.env.PORT ?? 3000), '0.0.0.0');
+  // '::' (dual stack), not '0.0.0.0': Railway's private network between
+  // services is IPv6, and the portal reaches the API over it.
+  await app.listen(Number(process.env.PORT ?? 3000), '::');
 }
 
 void bootstrap();
