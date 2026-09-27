@@ -6,12 +6,11 @@ import {
   HttpException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { isAuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js';
 import type { Request } from 'express';
+import { TokenService } from './tokens';
 import { ClubsService } from '../clubs/clubs.module';
 import type { Club } from '../clubs/clubs';
 import { SupabaseService } from '../supabase/supabase.module';
@@ -28,14 +27,15 @@ const FAILED_AUTH_WINDOW_MS = 60_000;
  *
  *   1. X-Club names the club; its registry entry is the only source of URLs
  *      and keys for the rest of the request.
- *   2. The Bearer token is verified with THAT club's JWKS (getClaims, ES256,
- *      no round trip), and its issuer must be that club's Auth. A club A token
- *      sent with X-Club: b fails both checks.
+ *   2. The Bearer token is the API's own access token (POST /auth/login),
+ *      verified with THAT club's key, and its issuer must be that club. A
+ *      club A token sent with X-Club: b fails both checks.
  *   3. The caller must have a profile with a role, and not be deactivated.
  *      A caller with no profile never reaches Postgres through the API: that
  *      is the NULL-role case that made the role RPCs fail open.
  *
- * Postgres verifies the same token again, because it is forwarded.
+ * Postgres then sees a short-lived token minted for this user (tokens.ts),
+ * and verifies it again with the key the club imported.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -48,6 +48,7 @@ export class AuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly clubs: ClubsService,
     private readonly supabase: SupabaseService,
+    private readonly tokens: TokenService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -62,45 +63,23 @@ export class AuthGuard implements CanActivate {
     const club = this.clubs.bySlug(slug);
     if (!club) throw new NotFoundException({ code: 'UNKNOWN_CLUB', message: 'Unknown club' });
 
-    const jwt = /^Bearer (.+)$/.exec(req.header('authorization') ?? '')?.[1];
-    if (!jwt) this.reject(ip);
+    const token = /^Bearer (.+)$/.exec(req.header('authorization') ?? '')?.[1];
+    if (!token) this.reject(ip);
 
-    // getClaims returns most failures but THROWS on a malformed token (bad
-    // base64, invalid UTF-8). A garbage token is the caller's fault: 401, not
-    // the 503 an unrecognised error would otherwise become.
-    let result: Awaited<ReturnType<SupabaseClient['auth']['getClaims']>>;
-    try {
-      result = await this.supabase.authClient(club).auth.getClaims(jwt);
-    } catch (e) {
-      if (isAuthRetryableFetchError(e)) {
-        throw new ServiceUnavailableException({ code: 'AUTH_UNAVAILABLE', message: 'Try again shortly' });
-      }
-      this.reject(ip);
-    }
-    const { data, error } = result;
-    if (error && isAuthRetryableFetchError(error)) {
-      // JWKS unreachable is our problem, not the token's. A 401 here would
-      // send every phone into a token-refresh loop.
-      throw new ServiceUnavailableException({ code: 'AUTH_UNAVAILABLE', message: 'Try again shortly' });
-    }
-    const claims = data?.claims;
-    const aud = claims?.aud;
-    if (
-      !claims ||
-      claims.role !== 'authenticated' ||
-      !(aud === 'authenticated' || (Array.isArray(aud) && aud.includes('authenticated'))) ||
-      claims.iss !== `${club.supabaseUrl}/auth/v1` ||
-      typeof claims.sub !== 'string'
-    ) {
-      this.reject(ip);
-    }
+    // Our own access token, checked against THIS club's key and issuer: a
+    // club A token sent with X-Club: b fails the signature and the issuer.
+    // Verified locally, so there is no key server to be unreachable.
+    const userId = this.tokens.verifyAccess(club, token);
+    if (!userId) this.reject(ip);
 
-    const profile = await this.profile(club, claims.sub, jwt);
+    // What the rest of the request uses to reach Postgres as this person.
+    const jwt = this.tokens.dbToken(club, userId);
+    const profile = await this.profile(club, userId, jwt);
     if (!profile || !profile.role || profile.active === false) {
       throw new ForbiddenException({ code: 'NO_ACCESS', message: 'This account has no access' });
     }
 
-    req.user = { id: claims.sub, jwt, club, profile };
+    req.user = { id: userId, jwt, club, profile };
     return true;
   }
 

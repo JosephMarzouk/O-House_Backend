@@ -32,6 +32,7 @@ describe('classifyRefusal', () => {
     ['Item not found', 'ITEM_NOT_FOUND'],
     ['Not authorized', 'NOT_AUTHORIZED'],
     ['Assignment is closed', 'ASSIGNMENT_CLOSED'],
+    ['ASSIGNMENT_TAKEN: Ahmed', 'ASSIGNMENT_TAKEN'],
   ])('%s is a refusal', (message, code) => expect(classifyRefusal(message)).toBe(code));
 
   it.each([

@@ -1,4 +1,4 @@
-import { cairoDate, completedAt, evidence, fetchAll, optionalText } from './assignments.module';
+import { cairoDate, completedAt, evidence, fetchAll, optionalText, photoOrVideo } from './assignments.module';
 import { photoPath, signaturePath, toBucketPath } from '../media/media.module';
 
 describe('toBucketPath', () => {
@@ -73,6 +73,20 @@ describe('phone input: an app bug is refused (parked), never retried forever', (
     expect(evidence({ buffer: png, size: 5 }, 'png')).toBe(png);
     expect(code(() => evidence({ buffer: png, size: 5 }, 'jpeg'))).toBe('INVALID_FILE');
     expect(code(() => evidence(undefined, 'png'))).toBe('INVALID_FILE');
+  });
+
+  it("an item's evidence is a JPEG photo or an MP4 clip, each with its own ceiling", () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1]);
+    const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypisom'), Buffer.alloc(8)]);
+    expect(photoOrVideo({ buffer: jpeg, size: 5 })).toMatchObject({ ext: 'jpg', contentType: 'image/jpeg' });
+    expect(photoOrVideo({ buffer: mp4, size: mp4.length })).toMatchObject({ ext: 'mp4', contentType: 'video/mp4' });
+    // A 6 MB "photo" is refused even though the route admits 50 MB for video.
+    const bigJpeg = Buffer.concat([jpeg, Buffer.alloc(6 * 1024 * 1024)]);
+    expect(code(() => photoOrVideo({ buffer: bigJpeg, size: bigJpeg.length }))).toBe('FILE_TOO_LARGE');
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(code(() => photoOrVideo({ buffer: png, size: png.length }))).toBe('INVALID_FILE');
+    expect(code(() => photoOrVideo(undefined))).toBe('INVALID_FILE');
+    expect(photoPath('a1', 'i1', 'p1', 'mp4')).toBe('photos/a1/i1-p1.mp4');
   });
 
   it('notes and answers are optional text', () => {

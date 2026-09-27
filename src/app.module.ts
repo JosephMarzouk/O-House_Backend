@@ -4,6 +4,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ClubsModule } from './clubs/clubs.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { AuthGuard } from './auth/auth.guard';
+import { AuthModule } from './auth/auth.module';
 import { MeModule } from './me/me.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { HealthController } from './health/health.controller';
@@ -30,6 +31,7 @@ class UserThrottlerGuard extends ThrottlerGuard {
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 600 }]),
     ClubsModule,
     SupabaseModule,
+    AuthModule,
     MeModule,
     AssignmentsModule,
     SyncModule,

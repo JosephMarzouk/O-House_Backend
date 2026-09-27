@@ -25,7 +25,11 @@ export class SupabaseService implements OnModuleInit {
     for (const club of this.clubs.all()) this.authClient(club);
   }
 
-  /** For verifying tokens (getClaims keeps the club's JWKS cached). */
+  /**
+   * A publishable-key client per club. Since our own sign-in (the API issues
+   * its tokens) nothing verifies Supabase tokens here; building one per club
+   * at boot is what keeps the Node < 22 failure at boot, not on a request.
+   */
   authClient(club: Club): SupabaseClient {
     let c = this.authClients.get(club.slug);
     if (!c) {

@@ -1,6 +1,11 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { clubForHost, parseClubs, toPublic } from './clubs';
 
+const jwk = () => generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' });
+
 const entry = {
+  apiJwtKey: jwk(),
+  dbSigningKey: { ...jwk(), kid: 'db-key-1' },
   code: 'ohouse',
   name: { en: 'O House', ar: 'أو هاوس' },
   supabaseUrl: 'https://ref.supabase.co/',
@@ -37,6 +42,20 @@ describe('parseClubs', () => {
   it('the public view carries no secret', () => {
     const pub = JSON.stringify(toPublic(parseClubs(JSON.stringify({ ohouse: entry })).get('ohouse')!));
     expect(pub).not.toContain('TOP');
+    expect(pub).not.toContain(entry.apiJwtKey.d as string);
+    expect(pub).not.toContain(entry.dbSigningKey.d as string);
+  });
+
+  it('needs both signing keys, the database one with its kid, and never prints them', () => {
+    const noKid = { ...entry, dbSigningKey: { ...entry.dbSigningKey, kid: undefined } };
+    expect(() => parseClubs(JSON.stringify({ ohouse: noKid }))).toThrow('CLUBS.ohouse.dbSigningKey must be a private EC P-256 JWK with a kid');
+    const publicOnly = { ...entry, apiJwtKey: { ...entry.apiJwtKey, d: undefined } };
+    expect(() => parseClubs(JSON.stringify({ ohouse: publicOnly }))).toThrow('CLUBS.ohouse.apiJwtKey');
+    try {
+      parseClubs(JSON.stringify({ ohouse: publicOnly }));
+    } catch (e) {
+      expect(String(e)).not.toContain(entry.apiJwtKey.x as string);
+    }
   });
 });
 

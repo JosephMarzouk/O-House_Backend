@@ -26,6 +26,12 @@ const PAGE = 1000; // PostgREST's default max-rows: past it a response is cut SI
 const IDS_PER_REQUEST = 50;
 // The phone compresses to a 1600 px long edge (~300 KB); these only stop abuse.
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+// A camera clip of at most 30 s (the app's maxDuration). image_picker cannot
+// compress video. 50 MB is also the bucket's limit (Supabase's default
+// project-wide upload limit), so raising one means raising both.
+// ponytail: multer holds the upload in memory; switch the evidence route to
+// disk storage if several phones upload clips at once.
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const MAX_SIGNATURE_BYTES = 1024 * 1024;
 const MAX_TEXT = 2000;
 
@@ -49,6 +55,23 @@ export function evidence(file: Upload, kind: keyof typeof MAGIC): Buffer {
     throw refused('INVALID_FILE', `Expected a ${kind.toUpperCase()} file`);
   }
   return b;
+}
+
+/**
+ * An item's evidence: a JPEG photo, or an MP4 clip (`ftyp` box at byte 4),
+ * told apart by the bytes, never the client's content type. Each kind has its
+ * own size ceiling; anything else is refused and parks on the phone.
+ */
+export function photoOrVideo(file: Upload): { bytes: Buffer; ext: 'jpg' | 'mp4'; contentType: string } {
+  const b = file?.buffer;
+  if (b && MAGIC.jpeg.every((byte, i) => b[i] === byte)) {
+    if (b.length > MAX_PHOTO_BYTES) throw refused('FILE_TOO_LARGE', 'Photo is too large');
+    return { bytes: b, ext: 'jpg', contentType: 'image/jpeg' };
+  }
+  if (b && b.length > 12 && b.toString('latin1', 4, 8) === 'ftyp') {
+    return { bytes: b, ext: 'mp4', contentType: 'video/mp4' };
+  }
+  throw refused('INVALID_FILE', 'Expected a JPEG photo or an MP4 video');
 }
 
 /** SY-7: the capture time must carry its offset, or "before the deadline" is ambiguous by hours. */
@@ -102,8 +125,11 @@ export class AssignmentsService {
       db
         .from('assignments_v')
         .select('*')
-        .eq('inspector_id', user.id)
-        .or(`scheduled_date.gte.${since},status.eq.follow_up`)
+        // Mine, or given to several of us and not yet claimed. Once another
+        // assignee acts first it drops off this list on the next refresh.
+        .or(`inspector_id.eq.${user.id},and(inspector_id.is.null,assignee_ids.cs.{${user.id}})`)
+        // A multi-day task stays while its last day is in the window.
+        .or(`scheduled_date.gte.${since},end_date.gte.${since},status.eq.follow_up`)
         .order('scheduled_date')
         .order('id')
         .range(from, to),
@@ -160,11 +186,11 @@ export class AssignmentsService {
 
   async photo(user: CurrentUser, id: string, itemId: string, photoId: unknown, file: Upload) {
     if (!isUuid(photoId)) throw refused('INVALID_FIELD', 'photoId must be a uuid');
-    const bytes = evidence(file, 'jpeg');
+    const { bytes, ext, contentType } = photoOrVideo(file);
     const db = this.supabase.forUser(user.club, user.jwt);
     await this.assertAssignee(db, user, id, itemId);
-    const path = photoPath(id, itemId, photoId);
-    await this.media.upload(user.club, path, bytes, 'image/jpeg');
+    const path = photoPath(id, itemId, photoId, ext);
+    await this.media.upload(user.club, path, bytes, contentType);
     must(await db.rpc('attach_item_photo', { p_item_id: itemId, p_storage_path: path }));
   }
 
@@ -190,20 +216,34 @@ export class AssignmentsService {
 
   /**
    * Authorizes the secret-key upload that follows: the round (and item) must
-   * be readable as the user, and theirs. A manager can read a report's round
-   * but must not write evidence into it. The RPC after the upload re-checks
-   * everything, including whether the round is still open.
+   * be readable as the user, and theirs — owned by them, or given to them and
+   * not yet claimed. A manager can read a report's round but must not write
+   * evidence into it. The RPC after the upload re-checks everything, claims
+   * the round, and refuses if it is closed or someone else got there first.
    */
   private async assertAssignee(db: SupabaseClient, user: CurrentUser, id: string, itemId?: string) {
     const [round, item] = await Promise.all([
-      db.from('assignments_v').select('inspector_id').eq('id', id).maybeSingle(),
+      db
+        .from('assignments_v')
+        .select('inspector_id, inspector_name, assignee_ids')
+        .eq('id', id)
+        .maybeSingle(),
       itemId
         ? db.from('assignment_items').select('id').eq('id', itemId).eq('assignment_id', id).maybeSingle()
         : Promise.resolve({ data: { id: '' }, error: null }),
     ]);
-    const r = must(round) as { inspector_id: string } | null;
+    const r = must(round) as {
+      inspector_id: string | null;
+      inspector_name: string | null;
+      assignee_ids: string[] | null;
+    } | null;
     if (!r) throw refused('ASSIGNMENT_NOT_FOUND', 'Assignment not found');
-    if (r.inspector_id !== user.id) throw refused('NOT_AUTHORIZED', 'Not authorized');
+    if (r.inspector_id !== user.id) {
+      if (!(r.assignee_ids ?? []).includes(user.id)) throw refused('NOT_AUTHORIZED', 'Not authorized');
+      if (r.inspector_id) {
+        throw refused('ASSIGNMENT_TAKEN', `ASSIGNMENT_TAKEN: ${r.inspector_name ?? ''}`);
+      }
+    }
     if (!must(item)) throw refused('ITEM_NOT_FOUND', 'Item not found');
   }
 
@@ -257,7 +297,8 @@ export class AssignmentsController {
   }
 
   @Post(':id/items/:itemId/photos')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_PHOTO_BYTES, files: 1 } }))
+  // The larger ceiling here; photoOrVideo() then holds a JPEG to MAX_PHOTO_BYTES.
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_VIDEO_BYTES, files: 1 } }))
   photo(
     @User() user: CurrentUser,
     @Param('id', Uuid) id: string,

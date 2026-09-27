@@ -20,6 +20,38 @@ export interface Club {
   bucket: string;
   /** Extra portal hosts, e.g. a club's own domain. <slug>.<PORTAL_DOMAIN> always works. */
   hosts: string[];
+  /** Private ES256 JWK: signs the access tokens the API hands to phones and the portal. */
+  apiJwtKey: EcJwk;
+  /**
+   * Private ES256 JWK, with its `kid`, imported into the club's Supabase JWT
+   * signing keys: signs the short-lived tokens the API sends PostgREST as the
+   * user. Supabase keeps only the public half's trust; this is the only copy.
+   */
+  dbSigningKey: EcJwk;
+}
+
+/** An EC P-256 private key as a JWK (`supabase gen signing-key --algorithm ES256`). */
+export interface EcJwk {
+  kty: 'EC';
+  crv: 'P-256';
+  x: string;
+  y: string;
+  d: string;
+  kid?: string;
+}
+
+/** Throws naming the field, never printing the key. */
+function parseEcJwk(v: unknown, where: string, needKid: boolean): EcJwk {
+  const k = v as Partial<EcJwk> | undefined;
+  const ok =
+    !!k &&
+    typeof k === 'object' &&
+    k.kty === 'EC' &&
+    k.crv === 'P-256' &&
+    [k.x, k.y, k.d].every((s) => typeof s === 'string' && s.length > 0) &&
+    (!needKid || (typeof k.kid === 'string' && k.kid.length > 0));
+  if (!ok) throw new Error(`${where} must be a private EC P-256 JWK${needKid ? ' with a kid' : ''}`);
+  return { kty: 'EC', crv: 'P-256', x: k!.x!, y: k!.y!, d: k!.d!, ...(k!.kid ? { kid: k!.kid } : {}) };
 }
 
 /** The fields safe to hand to an unauthenticated phone or browser. */
@@ -61,6 +93,8 @@ export function parseClubs(raw: string | undefined): Map<string, Club> {
       gatewayKey: c.gatewayKey!,
       bucket: c.bucket!,
       hosts: Array.isArray(c.hosts) ? c.hosts.map((h) => String(h).toLowerCase()) : [],
+      apiJwtKey: parseEcJwk(c.apiJwtKey, `CLUBS.${slug}.apiJwtKey`, false),
+      dbSigningKey: parseEcJwk(c.dbSigningKey, `CLUBS.${slug}.dbSigningKey`, true),
     });
   }
   if (clubs.size === 0) throw new Error('CLUBS has no clubs');

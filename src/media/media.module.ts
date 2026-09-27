@@ -81,8 +81,8 @@ export class MediaService {
 }
 
 /** Where evidence lives. The API derives it; the phone only supplies the ids it fixed at capture. */
-export const photoPath = (assignmentId: string, itemId: string, photoId: string) =>
-  `photos/${assignmentId}/${itemId}-${photoId}.jpg`;
+export const photoPath = (assignmentId: string, itemId: string, photoId: string, ext: 'jpg' | 'mp4' = 'jpg') =>
+  `photos/${assignmentId}/${itemId}-${photoId}.${ext}`;
 export const signaturePath = (assignmentId: string, signatureId: string) =>
   `signatures/${assignmentId}-${signatureId}.png`;
 

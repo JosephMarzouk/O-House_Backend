@@ -38,6 +38,8 @@ const REFUSALS: ReadonlyArray<[needle: string, code: string]> = [
   ['Item not found', 'ITEM_NOT_FOUND'],
   ['Not authorized', 'NOT_AUTHORIZED'],
   ['Assignment is closed', 'ASSIGNMENT_CLOSED'],
+  // Several assignees: another one acted first and owns the round.
+  ['ASSIGNMENT_TAKEN', 'ASSIGNMENT_TAKEN'],
   ['Invalid locale', 'INVALID_FIELD'], // set_locale
 ];
 
