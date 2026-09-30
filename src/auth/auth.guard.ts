@@ -30,7 +30,7 @@ const FAILED_AUTH_WINDOW_MS = 60_000;
  *   2. The Bearer token is the API's own access token (POST /auth/login),
  *      verified with THAT club's key, and its issuer must be that club. A
  *      club A token sent with X-Club: b fails both checks.
- *   3. The caller must have a profile with a role, and not be deactivated.
+ *   3. The caller must have a profile with a role (role_id), and not be deactivated.
  *      A caller with no profile never reaches Postgres through the API: that
  *      is the NULL-role case that made the role RPCs fail open.
  *
@@ -75,7 +75,7 @@ export class AuthGuard implements CanActivate {
     // What the rest of the request uses to reach Postgres as this person.
     const jwt = this.tokens.dbToken(club, userId);
     const profile = await this.profile(club, userId, jwt);
-    if (!profile || !profile.role || profile.active === false) {
+    if (!profile || !profile.role_id || profile.active === false) {
       throw new ForbiddenException({ code: 'NO_ACCESS', message: 'This account has no access' });
     }
 

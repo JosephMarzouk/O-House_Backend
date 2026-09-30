@@ -1,4 +1,4 @@
-import { afterFailure, grantableRoles, isLocked, LOCK_MS, parseLogin, refreshVerdict } from './logins';
+import { afterFailure, isLocked, LOCK_MS, parseLogin, refreshVerdict } from './logins';
 import { sha256, newRefreshToken } from './tokens';
 
 describe('parseLogin: one box for a phone or an email', () => {
@@ -53,14 +53,5 @@ describe('refresh tokens', () => {
     expect(t).toHaveLength(43);
     expect(newRefreshToken()).not.toBe(t);
     expect(sha256(t)).toMatch(/^[0-9a-f]{64}$/);
-  });
-});
-
-describe('grantableRoles: creating an account and resetting one are the same reach', () => {
-  it('admin: every staff role but admin; manager: inspector and cleaner; others: none', () => {
-    expect(grantableRoles('admin')).toEqual(['manager', 'inspector', 'cleaner']);
-    expect(grantableRoles('manager')).toEqual(['inspector', 'cleaner']);
-    expect(grantableRoles('inspector')).toEqual([]);
-    expect(grantableRoles(null)).toEqual([]);
   });
 });

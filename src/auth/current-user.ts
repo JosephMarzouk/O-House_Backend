@@ -7,13 +7,15 @@ import type { Club } from '../clubs/clubs';
  * the API never asks for it (same list as the portal's PROFILE_COLUMNS).
  */
 export const PROFILE_COLUMNS =
-  'id, name, email, role, created_at, department_id, manager_id, active, must_change_password, locale';
+  'id, name, email, role, role_id, created_at, department_id, manager_id, active, must_change_password, locale';
 
 export interface Profile {
   id: string;
   name: string | null;
   email: string | null;
+  /** Text mirror of the role, kept by a trigger (custom roles mirror as 'cleaner'). role_id is the truth. */
   role: string | null;
+  role_id: string | null;
   created_at: string;
   department_id: string | null;
   manager_id: string | null;

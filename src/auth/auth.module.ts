@@ -24,14 +24,15 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { ClubsService } from '../clubs/clubs.module';
 import type { Club } from '../clubs/clubs';
-import { UpstreamError } from '../common/upstream';
+import { must, UpstreamError } from '../common/upstream';
+import { isUuid } from '../common/errors.filter';
+import { SupabaseService } from '../supabase/supabase.module';
 import { Public } from './public.decorator';
 import { CurrentUser, User } from './current-user';
 import { ACCESS_TTL_S, DB_TTL_S, newRefreshToken, REFRESH_TTL_MS, sha256, TokenService } from './tokens';
 import {
   afterFailure,
   BCRYPT_COST,
-  grantableRoles,
   isLocked,
   MIN_PASSWORD,
   parseLogin,
@@ -57,7 +58,10 @@ export class LoginsService {
   // password" cost the same time and cannot be told apart.
   private readonly dummyHash = bcrypt.hashSync(randomBytes(24).toString('base64'), BCRYPT_COST);
 
-  constructor(private readonly tokens: TokenService) {}
+  constructor(
+    private readonly tokens: TokenService,
+    private readonly supabase: SupabaseService,
+  ) {}
 
   private db(club: Club): SupabaseClient {
     let c = this.clients.get(club.slug);
@@ -78,10 +82,19 @@ export class LoginsService {
 
   /** Active, with a role: the same bar the guard sets on every request. */
   private async mayUse(club: Club, userId: string): Promise<boolean> {
-    const p = await this.one<{ role: string | null; active: boolean | null }>(
-      this.db(club).from('profiles').select('role, active').eq('id', userId).maybeSingle(),
+    const p = await this.one<{ role_id: string | null; active: boolean | null }>(
+      this.db(club).from('profiles').select('role_id, active').eq('id', userId).maybeSingle(),
     );
-    return !!p?.role && p.active !== false;
+    return !!p?.role_id && p.active !== false;
+  }
+
+  /**
+   * The rail for the secret-key writes below (they bypass RLS): ask the
+   * database AS the caller whether their role may do this. Only an explicit
+   * true passes.
+   */
+  private async allowed(caller: CurrentUser, fn: 'can_assign_role' | 'can_manage_user', args: Record<string, unknown>) {
+    return must(await this.supabase.forUser(caller.club, caller.jwt).rpc(fn, args)) === true;
   }
 
   private async issue(club: Club, userId: string, family: string): Promise<Tokens> {
@@ -192,12 +205,25 @@ export class LoginsService {
   async createStaff(
     club: Club,
     caller: CurrentUser,
-    body: { name?: unknown; phone?: unknown; email?: unknown; password?: unknown; role?: unknown },
+    body: {
+      name?: unknown;
+      phone?: unknown;
+      email?: unknown;
+      password?: unknown;
+      roleId?: unknown;
+      departmentId?: unknown;
+    },
   ): Promise<{ id: string }> {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (!name) throw bad('FIELDS_REQUIRED', 'Name is required');
-    const role = typeof body.role === 'string' ? body.role : '';
-    if (!grantableRoles(caller.profile.role).includes(role)) throw new ForbiddenException({ code: 'ROLE_NOT_ALLOWED', message: 'You cannot give this role' });
+    if (!isUuid(body.roleId)) throw bad('ROLE_REQUIRED', 'Choose a role');
+    const roleId = body.roleId;
+    if (body.departmentId != null && !isUuid(body.departmentId)) throw bad('DEPARTMENT_INVALID', 'Not a department');
+    const departmentId = (body.departmentId as string | null | undefined) ?? null;
+    // The insert below uses the secret key (no RLS), so this is the only rail.
+    if (!(await this.allowed(caller, 'can_assign_role', { p_role_id: roleId, p_department_id: departmentId }))) {
+      throw new ForbiddenException({ code: 'ROLE_NOT_ALLOWED', message: 'You cannot give this role' });
+    }
     const password = typeof body.password === 'string' ? body.password : '';
     if (password.length < MIN_PASSWORD) throw bad('PASSWORD_TOO_SHORT', `At least ${MIN_PASSWORD} characters`);
 
@@ -219,7 +245,15 @@ export class LoginsService {
     const id = randomUUID();
     const hash = await bcrypt.hash(password, BCRYPT_COST);
     await this.one(
-      db.from('profiles').insert({ id, name, email: em ?? '', phone: ph, role, must_change_password: false }),
+      db.from('profiles').insert({
+        id,
+        name,
+        email: em ?? '',
+        phone: ph,
+        role_id: roleId,
+        department_id: departmentId,
+        must_change_password: false,
+      }),
     );
     const { error } = await db.from('user_logins').insert({ user_id: id, phone: ph, email: em, password_hash: hash });
     if (error) {
@@ -234,19 +268,19 @@ export class LoginsService {
   }
 
   /**
-   * An admin or manager sets someone's password (staff never change their
-   * own — business rule). The target must be a role the caller could create:
-   * resetting a peer's password is a silent account takeover. Every session
-   * the person had is ended.
+   * Someone with the users.edit permission sets a person's password (staff
+   * never change their own — business rule). can_manage_user says whether
+   * this person is in the caller's reach and holds a role the caller could
+   * create: resetting a peer's password is a silent account takeover. Every
+   * session the person had is ended.
    */
   async resetPassword(club: Club, caller: CurrentUser, targetId: string, password: unknown): Promise<void> {
     if (typeof password !== 'string' || password.length < MIN_PASSWORD) {
       throw bad('PASSWORD_TOO_SHORT', `At least ${MIN_PASSWORD} characters`);
     }
     const db = this.db(club);
-    const target = await this.one<{ role: string | null }>(db.from('profiles').select('role').eq('id', targetId).maybeSingle());
     // One answer for "no such user" and "not yours to reset": no id oracle.
-    if (!target || !grantableRoles(caller.profile.role).includes(target.role ?? '')) {
+    if (!(await this.allowed(caller, 'can_manage_user', { p_user_id: targetId }))) {
       throw new ForbiddenException({ code: 'NOT_AUTHORIZED', message: 'Not authorized' });
     }
     const updated = await this.one<{ user_id: string }[]>(

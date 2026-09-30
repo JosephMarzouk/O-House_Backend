@@ -59,12 +59,3 @@ export function refreshVerdict(
   if (row.revoked_reason === 'rotated' && now - Date.parse(row.revoked_at) < ROTATION_GRACE_MS) return 'grace';
   return row.revoked_reason === 'rotated' ? 'reuse' : 'dead';
 }
-
-/** Who may create or reset whom — the portal's grantableRoles, now enforced here. */
-export function grantableRoles(callerRole: string | null | undefined): readonly string[] {
-  return callerRole === 'admin'
-    ? ['manager', 'inspector', 'cleaner']
-    : callerRole === 'manager'
-      ? ['inspector', 'cleaner']
-      : [];
-}

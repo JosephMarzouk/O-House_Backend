@@ -17,7 +17,13 @@ The O House backend (NestJS), and the **only** home for database migrations.
   `CLUBS` registry is the only source of its URLs and keys. A club's Supabase project can live in any
   account.
 - **Auth checks.** The per-club issuer means a club A token cannot be used at club B. The guard also
-  requires a profile with a role, not deactivated. Routes are locked unless marked `@Public()`.
+  requires a profile with a role (`profiles.role_id`), not deactivated. Routes are locked unless
+  marked `@Public()`.
+- **Roles and permissions (since 29 Sep) live in the database.** Each club has its own roles
+  (`roles`, `role_permissions`, `role_departments`, `role_assignable`), built from a fixed catalog
+  (`permissions`, 30 keys such as `checklists.create`). Every policy and RPC guard asks
+  `has_permission(key)` and the scope helpers (own / team / chosen departments / whole club); the
+  API adds no role logic of its own. See "Roles" below.
 - **Several assignees.** A round can list several people (`submissions.assignee_ids`). The first to
   answer, attach evidence or submit claims it (`private.claim_assignment`); everyone else gets the
   422 refusal `ASSIGNMENT_TAKEN`. `inspector_id` is the owner, NULL until claimed.
@@ -34,9 +40,9 @@ The O House backend (NestJS), and the **only** home for database migrations.
 | `POST /auth/refresh` | Public. `{refreshToken}` → a new pair. The old one stays usable for 60 s (parallel tabs and requests); any later reuse revokes the whole family |
 | `POST /auth/logout` | Public. `{refreshToken}` → revoked |
 | `GET /auth/db-token` | The portal server only: needs header `x-ohouse-portal-key` = `PORTAL_GATEWAY_KEY`. Returns `{token, expiresIn, userId}`, the database JWT the portal queries Supabase with |
-| `POST /admin/staff` | Admin/manager: `{name, phone?, email?, password, role}` (at least one of phone or email; password ≥ 8). The role pick follows the portal's grant rules; the portal sets department and manager afterwards |
-| `POST /admin/staff/:id/password` | Admin/manager: set a password; revokes that person's sessions |
-| `GET /me` | The signed-in profile (no phone), the club's branding, and `pages`: the About / Policies text an admin writes in the portal (`club_pages`) |
+| `POST /admin/staff` | `{name, phone?, email?, password, roleId, departmentId?}` (at least one of phone or email; password ≥ 8). Allowed only if `can_assign_role(roleId, departmentId)` says so **as the caller** (403 `ROLE_NOT_ALLOWED`); the insert itself uses the secret key, so that call is the only rail. A caller scoped to departments must send one of theirs |
+| `POST /admin/staff/:id/password` | Set a password; revokes that person's sessions. Allowed only if `can_manage_user(id)` (403 `NOT_AUTHORIZED`, the same answer for "no such user") |
+| `GET /me` | The signed-in profile (no phone), the club's branding, `pages` (the About / Policies text an admin writes in the portal, `club_pages`), `location` (`{lat, lng, radiusM}` or null: the club's zone, `club_location`; the app keeps checklists shut outside it) and `access` (`my_access()`: the role with its names, scope, departments, permissions, assignable roles) |
 | `GET /assignments` | The phone's offline set: the last 7 days (Cairo), every future date, open follow-ups. Items included, paged past PostgREST's 1000-row cap. |
 | `GET /assignments/:id` | One round, if RLS lets you see it, plus signed links (1 h) for its photos and signature |
 | `POST /assignments/:id/items/:itemId/answer` | `{answer?, note?}` → `mark_item_done` |
@@ -81,6 +87,27 @@ npx supabase db pull              # writes <timestamp>_remote_schema.sql = the l
                                   # (20260923105225_restore_role_guards is already applied and matches)
 npx supabase migration list       # local and remote must match
 ```
+
+## Roles (migrations `20260929125516`, `…125625`, `…162634`)
+
+- **Defaults, seeded to match the old four:** Admin (locked, whole club, everything except "Staff
+  app"), Manager (team), Inspector (own), Cleaner (own, "Staff app" only). Clubs add their own in
+  the portal's Roles screen (`create_role`, `update_role`, `delete_role`, `assign_role`).
+- **Rails, inside those functions:** managing roles needs `roles.*` and whole-club scope; an editor
+  cannot give a permission they lack (`staff_app.view` aside: it means "can be given checklists",
+  a trait, not a power); a role with `users.create` / `users.edit` may create or assign exactly the
+  roles ticked for it, even stronger ones (your decision, 29 Sep); nobody can assign the Admin role,
+  edit it, or edit their own role; a role in use, or a default, cannot be deleted. Every change is in
+  `role_audit`.
+- **The Admin role is granted only by hand**, in the SQL Editor:
+  `update profiles set role = 'admin' where id = '…';` (the trigger sets `role_id`).
+- **Until flag day:** `profiles.role` stays as a mirror of the role's key (custom roles mirror as
+  `cleaner`), `set_user_role(uuid, text)` stays as a wrapper, and `current_role()` stays for the
+  unused legacy follow-up tables. The production portal on `main` and the old web checklist read
+  them.
+- **Other rules added on 29 Sep:** `reject_items` refuses a blank reason (`REASON_REQUIRED`);
+  `set_club_location` works once, for the Admin role only. A wrong pin is cleared by support:
+  `delete from public.club_location;`.
 
 ## Keys (Step 0)
 

@@ -25,7 +25,7 @@ const A = club('a', 'aaaa');
 const B = club('b', 'bbbb');
 
 const USER = '11111111-1111-1111-1111-111111111111';
-const PROFILE = { id: USER, role: 'cleaner', active: true };
+const PROFILE = { id: USER, role: 'cleaner', role_id: '22222222-2222-2222-2222-222222222222', active: true };
 
 function setup(opts: { profile?: unknown } = {}) {
   const tokens = new TokenService();
@@ -89,11 +89,17 @@ describe('AuthGuard', () => {
     expect((await s.call({ authorization: `Bearer ${db}`, 'x-club': 'a' })).status).toBe(401);
   });
 
-  it('refuses a caller with no profile, no role, or deactivated → 403', async () => {
-    for (const profile of [null, { ...PROFILE, role: null }, { ...PROFILE, active: false }]) {
+  it('refuses a caller with no profile, no role_id, or deactivated → 403', async () => {
+    // role_id is the truth: the role text mirror alone does not count.
+    for (const profile of [null, { ...PROFILE, role_id: null }, { ...PROFILE, active: false }]) {
       const s = setup({ profile });
       expect((await s.call({ ...s.bearer(A), 'x-club': 'a' })).status).toBe(403);
     }
+  });
+
+  it('lets a custom role through: role_id present, role text irrelevant', async () => {
+    const s = setup({ profile: { ...PROFILE, role: null } });
+    expect((await s.call({ ...s.bearer(A), 'x-club': 'a' })).status).toBe(200);
   });
 
   it('caches the profile per club and user for 60 s', async () => {
