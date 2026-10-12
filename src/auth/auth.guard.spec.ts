@@ -20,6 +20,7 @@ const club = (slug: string, ref: string): Club => ({
   hosts: [],
   apiJwtKey: jwk(),
   dbSigningKey: jwk(`db-${slug}`),
+  fcmServiceAccount: null,
 });
 const A = club('a', 'aaaa');
 const B = club('b', 'bbbb');

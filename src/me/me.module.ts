@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Module, Patch } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Module, Param, Patch, Put } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.module';
 import { CurrentUser, PROFILE_COLUMNS, User } from '../auth/current-user';
 import { must } from '../common/upstream';
@@ -57,6 +57,27 @@ export class MeController {
   async locale(@User() user: CurrentUser, @Body('locale') locale: unknown) {
     if (typeof locale !== 'string') throw refused('INVALID_FIELD', 'locale must be text');
     must(await this.supabase.forUser(user.club, user.jwt).rpc('set_locale', { p_locale: locale }));
+  }
+
+  /**
+   * The phone's FCM token (PN-1). Sent after sign-in and whenever Firebase
+   * rotates it; idempotent. A token belongs to one user at a time: on a
+   * shared phone the next person's sign-in takes it over (register_device_token
+   * is SECURITY DEFINER for exactly that).
+   */
+  @Put('devices')
+  @HttpCode(204)
+  async registerDevice(@User() user: CurrentUser, @Body('token') token: unknown, @Body('platform') platform: unknown) {
+    if (typeof token !== 'string' || !token.trim()) throw refused('INVALID_FIELD', 'token must be text');
+    if (platform !== 'android' && platform !== 'ios') throw refused('INVALID_FIELD', 'platform must be android or ios');
+    must(await this.supabase.forUser(user.club, user.jwt).rpc('register_device_token', { p_token: token, p_platform: platform }));
+  }
+
+  /** At sign-out, before the session goes. Only the caller's own token is removed; anything else is a no-op. */
+  @Delete('devices/:token')
+  @HttpCode(204)
+  async unregisterDevice(@User() user: CurrentUser, @Param('token') token: string) {
+    must(await this.supabase.forUser(user.club, user.jwt).rpc('unregister_device_token', { p_token: token }));
   }
 }
 

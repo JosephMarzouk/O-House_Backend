@@ -27,6 +27,15 @@ The O House backend (NestJS), and the **only** home for database migrations.
 - **Several assignees.** A round can list several people (`submissions.assignee_ids`). The first to
   answer, attach evidence or submit claims it (`private.claim_assignment`); everyone else gets the
   422 refusal `ASSIGNMENT_TAKEN`. `inspector_id` is the owner, NULL until claimed.
+- **Push notifications (since 12 Oct, `src/notifications/`).** Each club is its own Firebase project;
+  the API sends through FCM with that club's `fcmServiceAccount` (see Keys). The database queues: a
+  trigger on `submissions` adds E1 (new round), E5 (sent back) and E8 (follow-up, to the manager) to
+  `notifications`; every minute the API calls `enqueue_due_notifications()` for E3 (30 min before the
+  deadline) and E4 (overdue, to the workers and their manager). Every 5 s the worker claims up to 100
+  rows (`claim_notifications`, SKIP LOCKED), renders them in the person's language (Arabic when unset),
+  sends one summary per person per planner save, retries with backoff (30 s → 4 min, then `failed`),
+  skips rows over an hour old, and deletes tokens FCM calls unregistered. The row keeps the title and
+  body it was sent with. A club without a key boots with its worker idle.
 - **Errors (`src/common/errors.filter.ts`).** Phones rely on this contract:
   - **422 `{refused: true, code}`:** only a known business refusal. The phone parks the op.
   - **401:** sign in again.
@@ -48,7 +57,9 @@ The O House backend (NestJS), and the **only** home for database migrations.
 | `POST /assignments/:id/items/:itemId/answer` | `{answer?, note?}` → `mark_item_done` |
 | `POST /assignments/:id/items/:itemId/photos` | Multipart `file` + `photoId` (uuid): a JPEG (≤ 5 MB) or an MP4 video from the camera (≤ 50 MB, checked by its `ftyp` bytes). The API stores it at `photos/{id}/{itemId}-{photoId}.jpg` or `.mp4`, then `attach_item_photo` |
 | `POST /assignments/:id/submit` | Multipart `file` (PNG, ≤ 1 MB), `signatureId`, `completedAt` (ISO-8601 **with offset**), `note?` → `submit_assignment` |
-| `PATCH /me/locale` | `set_locale`. (No password route: staff never change their password in the app; only an admin sets it, in the portal.) |
+| `PATCH /me/locale` | `set_locale`. (No password route: staff never change their password in the app; only an admin sets it, in the portal.) The language pushes are written in |
+| `PUT /me/devices` | `{token, platform: android\|ios}` → `register_device_token`: the phone's FCM token now belongs to the caller (a shared phone changes hands) |
+| `DELETE /me/devices/:token` | At sign-out → `unregister_device_token` (the caller's own token only) |
 | `POST /sync/refusals` | `{op, code, message?, assignmentId?, itemId?}`: a refusal the phone decided itself (e.g. a purged file) |
 
 **Writes.** Send an `Idempotency-Key` (uuid, fixed when the op was queued). Repeats are harmless: the
@@ -133,6 +144,13 @@ Each `CLUBS` entry needs two ES256 private JWKs (see `railway.env.template`):
   Until it is imported, every query fails with 401.
 
 Plus `PORTAL_GATEWAY_KEY` (the portal's `OHOUSE_GATEWAY_KEY` must match).
+
+**`fcmServiceAccount`** (optional, per club): the club's Firebase service-account JSON, pasted whole as
+an object (Firebase console → Project settings → Service accounts → Generate new private key). Absent:
+no push for that club. The API checks its shape at boot and never prints it. Copy it into a local
+`.env` with a script that writes the value without echoing it, and delete the downloaded file
+afterwards; Firebase issues a new one whenever needed. Note that a local API with this key sends real
+pushes from the club's live database.
 
 **Cutover:** `select private.copy_auth_logins();` copies logins and password hashes from
 `auth.users` again (newer hash wins). Run it right before the old portal and app are retired, so a

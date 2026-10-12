@@ -59,6 +59,41 @@ describe('parseClubs', () => {
   });
 });
 
+describe('parseClubs: fcmServiceAccount', () => {
+  const sa = {
+    type: 'service_account',
+    project_id: 'o-house-test',
+    client_email: 'firebase-adminsdk@o-house-test.iam.gserviceaccount.com',
+    private_key: '-----BEGIN PRIVATE KEY-----\nTOPSECRET\n-----END PRIVATE KEY-----\n',
+  };
+
+  it('is optional: a club without one has no push', () => {
+    expect(parseClubs(JSON.stringify({ ohouse: entry })).get('ohouse')!.fcmServiceAccount).toBeNull();
+  });
+
+  it('keeps the three fields cert() needs', () => {
+    const c = parseClubs(JSON.stringify({ ohouse: { ...entry, fcmServiceAccount: sa } })).get('ohouse')!;
+    expect(c.fcmServiceAccount).toEqual({ projectId: 'o-house-test', clientEmail: sa.client_email, privateKey: sa.private_key });
+  });
+
+  it('refuses a malformed key, naming the field and never printing it', () => {
+    const bad = { ...sa, type: 'authorized_user' };
+    expect(() => parseClubs(JSON.stringify({ ohouse: { ...entry, fcmServiceAccount: bad } }))).toThrow(
+      'CLUBS.ohouse.fcmServiceAccount must be a Firebase service-account JSON',
+    );
+    try {
+      parseClubs(JSON.stringify({ ohouse: { ...entry, fcmServiceAccount: { ...sa, client_email: '' } } }));
+    } catch (e) {
+      expect(String(e)).not.toContain('TOPSECRET');
+    }
+  });
+
+  it('the public view carries no Firebase key', () => {
+    const c = parseClubs(JSON.stringify({ ohouse: { ...entry, fcmServiceAccount: sa } })).get('ohouse')!;
+    expect(JSON.stringify(toPublic(c))).not.toContain('TOPSECRET');
+  });
+});
+
 describe('clubForHost', () => {
   const clubs = [...parseClubs(JSON.stringify({ ohouse: entry, clubb: { ...entry, code: 'B', hosts: ['portal.clubb.com'] } })).values()];
 

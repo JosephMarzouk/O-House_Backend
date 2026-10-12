@@ -28,6 +28,34 @@ export interface Club {
    * user. Supabase keeps only the public half's trust; this is the only copy.
    */
   dbSigningKey: EcJwk;
+  /**
+   * The club's Firebase service-account key (the JSON file Firebase calls a
+   * "private key", pasted whole). Each club's staff app has its own Firebase
+   * project, and a phone's token only takes messages signed by that project,
+   * so one club's key can never reach another club's staff. Absent: the club
+   * has no push yet, and its notifications are recorded as skipped.
+   */
+  fcmServiceAccount: FcmServiceAccount | null;
+}
+
+/** The three fields firebase-admin's cert() needs, from a service-account JSON file. */
+export interface FcmServiceAccount {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+}
+
+/** Throws naming the field, never printing the key. */
+function parseFcmServiceAccount(v: unknown, where: string): FcmServiceAccount | null {
+  if (v === undefined || v === null) return null;
+  const k = v as Record<string, unknown>;
+  const ok =
+    typeof k === 'object' &&
+    k.type === 'service_account' &&
+    [k.project_id, k.client_email, k.private_key].every((s) => typeof s === 'string' && s.length > 0) &&
+    String(k.private_key).includes('PRIVATE KEY');
+  if (!ok) throw new Error(`${where} must be a Firebase service-account JSON (type, project_id, client_email, private_key)`);
+  return { projectId: String(k.project_id), clientEmail: String(k.client_email), privateKey: String(k.private_key) };
 }
 
 /** An EC P-256 private key as a JWK (`supabase gen signing-key --algorithm ES256`). */
@@ -95,6 +123,7 @@ export function parseClubs(raw: string | undefined): Map<string, Club> {
       hosts: Array.isArray(c.hosts) ? c.hosts.map((h) => String(h).toLowerCase()) : [],
       apiJwtKey: parseEcJwk(c.apiJwtKey, `CLUBS.${slug}.apiJwtKey`, false),
       dbSigningKey: parseEcJwk(c.dbSigningKey, `CLUBS.${slug}.dbSigningKey`, true),
+      fcmServiceAccount: parseFcmServiceAccount(c.fcmServiceAccount, `CLUBS.${slug}.fcmServiceAccount`),
     });
   }
   if (clubs.size === 0) throw new Error('CLUBS has no clubs');

@@ -9,6 +9,7 @@ import { MeModule } from './me/me.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { HealthController } from './health/health.controller';
 import { SyncModule } from './sync/sync.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { ErrorsFilter } from './common/errors.filter';
 
 /**
@@ -35,6 +36,7 @@ class UserThrottlerGuard extends ThrottlerGuard {
     MeModule,
     AssignmentsModule,
     SyncModule,
+    NotificationsModule, // the push worker; idle for a club without a Firebase key
   ],
   controllers: [HealthController],
   providers: [

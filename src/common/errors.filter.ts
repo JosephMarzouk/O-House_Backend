@@ -41,6 +41,7 @@ const REFUSALS: ReadonlyArray<[needle: string, code: string]> = [
   // Several assignees: another one acted first and owns the round.
   ['ASSIGNMENT_TAKEN', 'ASSIGNMENT_TAKEN'],
   ['Invalid locale', 'INVALID_FIELD'], // set_locale
+  ['INVALID_TOKEN', 'INVALID_FIELD'], // register_device_token
 ];
 
 export function classifyRefusal(message: string): string | null {

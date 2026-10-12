@@ -50,3 +50,30 @@ describe('GET /me', () => {
     expect((await controller(null).me.me(user)).access).toBeNull();
   });
 });
+
+describe('PUT / DELETE /me/devices', () => {
+  const user = { id: 'u1', jwt: 'db-jwt', club: { slug: 'a' } } as unknown as CurrentUser;
+  function controller() {
+    const rpc = jest.fn(() => Promise.resolve({ data: null, error: null }));
+    return { rpc, me: new MeController({ forUser: () => ({ rpc }) } as any) };
+  }
+
+  it('registers the token as the user, so it moves to whoever signs in on a shared phone', async () => {
+    const c = controller();
+    await c.me.registerDevice(user, 'fcm-token', 'android');
+    expect(c.rpc).toHaveBeenCalledWith('register_device_token', { p_token: 'fcm-token', p_platform: 'android' });
+  });
+
+  it('refuses a missing token or an unknown platform (422: the phone parks, not retries)', async () => {
+    const c = controller();
+    await expect(c.me.registerDevice(user, '', 'android')).rejects.toMatchObject({ response: { code: 'INVALID_FIELD' } });
+    await expect(c.me.registerDevice(user, 't', 'web')).rejects.toMatchObject({ response: { code: 'INVALID_FIELD' } });
+    expect(c.rpc).not.toHaveBeenCalled();
+  });
+
+  it('unregisters only through the user-scoped function', async () => {
+    const c = controller();
+    await c.me.unregisterDevice(user, 'fcm-token');
+    expect(c.rpc).toHaveBeenCalledWith('unregister_device_token', { p_token: 'fcm-token' });
+  });
+});
