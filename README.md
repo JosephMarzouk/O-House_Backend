@@ -150,7 +150,9 @@ an object (Firebase console → Project settings → Service accounts → Genera
 no push for that club. The API checks its shape at boot and never prints it. Copy it into a local
 `.env` with a script that writes the value without echoing it, and delete the downloaded file
 afterwards; Firebase issues a new one whenever needed. Note that a local API with this key sends real
-pushes from the club's live database.
+pushes from the club's live database. **On Railway:** read `CLUBS` with `railway variables --json`, add the
+key to the club's entry, and write the whole JSON back with `railway variables --set-from-stdin CLUBS`, so
+the key never lands on a command line; Railway redeploys and the log shows `push on for <slug>`.
 
 **Cutover:** `select private.copy_auth_logins();` copies logins and password hashes from
 `auth.users` again (newer hash wins). Run it right before the old portal and app are retired, so a
