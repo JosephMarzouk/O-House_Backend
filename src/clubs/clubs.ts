@@ -36,6 +36,38 @@ export interface Club {
    * has no push yet, and its notifications are recorded as skipped.
    */
   fcmServiceAccount: FcmServiceAccount | null;
+  /**
+   * The report emails (src/reports): the club's Microsoft 365 app
+   * registration with the application permission Mail.Send. The address it
+   * sends from is set on Club settings (report_mail_settings.sender), not
+   * here. `portalUrl` is where the API fetches the report PDF. Absent: no
+   * report emails.
+   */
+  mail: MailConfig | null;
+}
+
+export interface MailConfig {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  portalUrl: string;
+}
+
+/** Throws naming the field, never printing the secret. */
+function parseMail(v: unknown, where: string): MailConfig | null {
+  if (v === undefined || v === null) return null;
+  const m = v as Record<string, unknown>;
+  const ok =
+    typeof m === 'object' &&
+    [m.tenantId, m.clientId, m.clientSecret, m.portalUrl].every((s) => typeof s === 'string' && s.length > 0) &&
+    /^https?:\/\//.test(String(m.portalUrl));
+  if (!ok) throw new Error(`${where} must have tenantId, clientId, clientSecret and portalUrl (http/https)`);
+  return {
+    tenantId: String(m.tenantId),
+    clientId: String(m.clientId),
+    clientSecret: String(m.clientSecret),
+    portalUrl: String(m.portalUrl).replace(/\/+$/, ''),
+  };
 }
 
 /** The three fields firebase-admin's cert() needs, from a service-account JSON file. */
@@ -124,6 +156,7 @@ export function parseClubs(raw: string | undefined): Map<string, Club> {
       apiJwtKey: parseEcJwk(c.apiJwtKey, `CLUBS.${slug}.apiJwtKey`, false),
       dbSigningKey: parseEcJwk(c.dbSigningKey, `CLUBS.${slug}.dbSigningKey`, true),
       fcmServiceAccount: parseFcmServiceAccount(c.fcmServiceAccount, `CLUBS.${slug}.fcmServiceAccount`),
+      mail: parseMail(c.mail, `CLUBS.${slug}.mail`),
     });
   }
   if (clubs.size === 0) throw new Error('CLUBS has no clubs');

@@ -21,6 +21,7 @@ const club = (slug: string, ref: string): Club => ({
   apiJwtKey: jwk(),
   dbSigningKey: jwk(`db-${slug}`),
   fcmServiceAccount: null,
+  mail: null,
 });
 const A = club('a', 'aaaa');
 const B = club('b', 'bbbb');

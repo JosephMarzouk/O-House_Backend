@@ -10,6 +10,7 @@ import { AssignmentsModule } from './assignments/assignments.module';
 import { HealthController } from './health/health.controller';
 import { SyncModule } from './sync/sync.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ReportMailModule } from './reports/report-mail.module';
 import { ErrorsFilter } from './common/errors.filter';
 
 /**
@@ -37,6 +38,7 @@ class UserThrottlerGuard extends ThrottlerGuard {
     AssignmentsModule,
     SyncModule,
     NotificationsModule, // the push worker; idle for a club without a Firebase key
+    ReportMailModule, // the report emails; idle for a club without `mail`
   ],
   controllers: [HealthController],
   providers: [

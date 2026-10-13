@@ -19,11 +19,12 @@ import { Event, Locale, Params, pushData, render, RoundInfo } from './messages';
  */
 
 /**
- * The secret key's third home (with media/ and auth/): a provider of this
- * module, not exported, so nothing else can inject this copy.
+ * The secret key's third home (with media/ and auth/): a provider of the
+ * worker modules (this one and reports/), never exported from a module, so
+ * no request handler can inject it.
  */
 @Injectable()
-class SystemClients {
+export class SystemClients {
   private readonly clients = new Map<string, SupabaseClient>();
 
   for(club: Club): SupabaseClient {

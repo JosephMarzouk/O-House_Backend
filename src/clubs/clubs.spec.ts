@@ -94,6 +94,33 @@ describe('parseClubs: fcmServiceAccount', () => {
   });
 });
 
+describe('parseClubs: mail', () => {
+  const mail = {
+    tenantId: 't',
+    clientId: 'c',
+    clientSecret: 'TOPSECRET',
+    portalUrl: 'https://portal.club.com/',
+  };
+
+  it('is optional, and keeps the four fields without a trailing slash', () => {
+    expect(parseClubs(JSON.stringify({ ohouse: entry })).get('ohouse')!.mail).toBeNull();
+    const c = parseClubs(JSON.stringify({ ohouse: { ...entry, mail } })).get('ohouse')!;
+    expect(c.mail).toEqual({ ...mail, portalUrl: 'https://portal.club.com' });
+    expect(JSON.stringify(toPublic(c))).not.toContain('TOPSECRET');
+  });
+
+  it('refuses a bad one, naming the field and never printing the secret', () => {
+    for (const bad of [{ ...mail, portalUrl: 'portal.club.com' }, { ...mail, tenantId: '' }]) {
+      expect(() => parseClubs(JSON.stringify({ ohouse: { ...entry, mail: bad } }))).toThrow('CLUBS.ohouse.mail must have');
+      try {
+        parseClubs(JSON.stringify({ ohouse: { ...entry, mail: bad } }));
+      } catch (e) {
+        expect(String(e)).not.toContain('TOPSECRET');
+      }
+    }
+  });
+});
+
 describe('clubForHost', () => {
   const clubs = [...parseClubs(JSON.stringify({ ohouse: entry, clubb: { ...entry, code: 'B', hosts: ['portal.clubb.com'] } })).values()];
 
