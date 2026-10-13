@@ -36,6 +36,17 @@ The O House backend (NestJS), and the **only** home for database migrations.
   sends one summary per person per planner save, retries with backoff (30 s → 4 min, then `failed`),
   skips rows over an hour old, and deletes tokens FCM calls unregistered. The row keeps the title and
   body it was sent with. A club without a key boots with its worker idle.
+- **Report emails (since 13 Oct, `src/reports/`).** At 23:30 Cairo time the API mails each department's
+  checklist report (a PDF) to the addresses an admin typed on the portal's Club settings, plus one "All
+  departments" report to a separate list. The admin picks daily, weekly (Saturday to Friday, sent on
+  Friday) or off. A worker wakes every 60 s; `duePeriod()` decides whether a report is due;
+  `claim_report_mail` hands each (period, department) to one API instance only; a failure is tried again
+  twice, 5 minutes apart. `sendReport()` asks the portal for `/reports/daily/summary` (JSON) and
+  `/reports/daily/pdf` with a 15-minute token minted for the admin who saved the settings (`set_by`), so
+  a report never shows more than that admin can see. The body is a short English and Arabic brief; the
+  details are in the PDF. Mail goes through Microsoft Graph (`graph.ts`, no SDK) from one mailbox per
+  club, set on Club settings. Each send's outcome is in `report_mail_log`. A club without `mail` in
+  `CLUBS` gets no report emails.
 - **Errors (`src/common/errors.filter.ts`).** Phones rely on this contract:
   - **422 `{refused: true, code}`:** only a known business refusal. The phone parks the op.
   - **401:** sign in again.
@@ -153,6 +164,26 @@ afterwards; Firebase issues a new one whenever needed. Note that a local API wit
 pushes from the club's live database. **On Railway:** read `CLUBS` with `railway variables --json`, add the
 key to the club's entry, and write the whole JSON back with `railway variables --set-from-stdin CLUBS`, so
 the key never lands on a command line; Railway redeploys and the log shows `push on for <slug>`.
+
+**`mail`** (optional, per club): `{ tenantId, clientId, clientSecret, portalUrl }`, for the report emails.
+Absent: no report emails for that club. The first three come from the club's Microsoft Entra app
+registration (Entra admin centre → App registrations): tenantId is its Directory (tenant) ID, clientId
+its Application (client) ID, clientSecret a client secret created under Certificates & secrets (copy the
+secret's *Value* when it is made; it is shown once; secrets expire, so note the date). The app needs the
+**application** permission `Mail.Send` (Microsoft Graph) with admin consent granted. `portalUrl` is the
+base URL of the club's portal (the Railway portal's address), which the API calls to get the report. The
+**sender address is not here**: an admin sets it on the portal's Club settings (it is stored in
+`report_mail_settings.sender`) and it must be a real mailbox of that tenant. Recommended (IT): restrict the
+app to that one mailbox, since `Mail.Send` as an application permission can otherwise send as anyone in the
+tenant; create an Exchange application access policy
+(`New-ApplicationAccessPolicy -AppId <clientId> -PolicyScopeGroupId <group with the mailbox> -AccessRight RestrictAccess`).
+Mailbox restrictions can take about an hour to apply. One send is a single Graph request, so a PDF can be about
+3 MB at most (real ones: 0.1 to 0.8 MB). `REPORT_MAIL_AT` (`HH:MM`, Cairo time, default `23:30`) moves the
+send time; it is for testing only. Note that a local API with this key sends the club's real reports from its
+live database (the claim stops a second API from sending the same one twice, but the first to claim wins, so
+keep the local one stopped unless you are testing). **On Railway:** the same stdin recipe as the Firebase key:
+read `CLUBS` with `railway variables --json`, add `mail` to the club's entry, write the whole JSON back with
+`railway variables --set-from-stdin CLUBS`; Railway redeploys. Never put the secret on a command line.
 
 **Cutover:** `select private.copy_auth_logins();` copies logins and password hashes from
 `auth.users` again (newer hash wins). Run it right before the old portal and app are retired, so a
