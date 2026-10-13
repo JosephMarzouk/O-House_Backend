@@ -102,15 +102,31 @@ describe('parseClubs: mail', () => {
     portalUrl: 'https://portal.club.com/',
   };
 
-  it('is optional, and keeps the four fields without a trailing slash', () => {
+  it('is optional, and keeps the fields without a trailing slash; sender is optional too', () => {
     expect(parseClubs(JSON.stringify({ ohouse: entry })).get('ohouse')!.mail).toBeNull();
     const c = parseClubs(JSON.stringify({ ohouse: { ...entry, mail } })).get('ohouse')!;
-    expect(c.mail).toEqual({ ...mail, portalUrl: 'https://portal.club.com' });
+    expect(c.mail).toEqual({ ...mail, sender: null, portalUrl: 'https://portal.club.com' });
     expect(JSON.stringify(toPublic(c))).not.toContain('TOPSECRET');
+    const s = parseClubs(JSON.stringify({ ohouse: { ...entry, mail: { ...mail, sender: 'Reports@Club.com' } } })).get('ohouse')!;
+    expect(s.mail!.sender).toBe('reports@club.com');
+  });
+
+  it('one API for several clubs: each keeps its own mail, and none may share a portal or a sender', () => {
+    const a = { ...mail, sender: 'reports@a.com', portalUrl: 'https://a.example.com' };
+    const b = { ...mail, clientSecret: 'OTHER', sender: 'reports@b.com', portalUrl: 'https://b.example.com' };
+    const clubs = parseClubs(JSON.stringify({ a: { ...entry, mail: a }, b: { ...entry, code: 'B', mail: b } }));
+    expect(clubs.get('a')!.mail).toMatchObject({ sender: 'reports@a.com', portalUrl: 'https://a.example.com', clientSecret: 'TOPSECRET' });
+    expect(clubs.get('b')!.mail).toMatchObject({ sender: 'reports@b.com', portalUrl: 'https://b.example.com', clientSecret: 'OTHER' });
+    expect(() =>
+      parseClubs(JSON.stringify({ a: { ...entry, mail: a }, b: { ...entry, code: 'B', mail: { ...b, portalUrl: 'https://A.example.com/' } } })),
+    ).toThrow('CLUBS: a and b have the same mail.portalUrl');
+    expect(() =>
+      parseClubs(JSON.stringify({ a: { ...entry, mail: a }, b: { ...entry, code: 'B', mail: { ...b, sender: 'REPORTS@a.com' } } })),
+    ).toThrow('CLUBS: a and b have the same mail.sender');
   });
 
   it('refuses a bad one, naming the field and never printing the secret', () => {
-    for (const bad of [{ ...mail, portalUrl: 'portal.club.com' }, { ...mail, tenantId: '' }]) {
+    for (const bad of [{ ...mail, portalUrl: 'portal.club.com' }, { ...mail, tenantId: '' }, { ...mail, sender: 'reports' }]) {
       expect(() => parseClubs(JSON.stringify({ ohouse: { ...entry, mail: bad } }))).toThrow('CLUBS.ohouse.mail must have');
       try {
         parseClubs(JSON.stringify({ ohouse: { ...entry, mail: bad } }));

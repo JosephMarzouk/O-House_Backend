@@ -165,15 +165,19 @@ pushes from the club's live database. **On Railway:** read `CLUBS` with `railway
 key to the club's entry, and write the whole JSON back with `railway variables --set-from-stdin CLUBS`, so
 the key never lands on a command line; Railway redeploys and the log shows `push on for <slug>`.
 
-**`mail`** (optional, per club): `{ tenantId, clientId, clientSecret, portalUrl }`, for the report emails.
+**`mail`** (optional, per club): `{ tenantId, clientId, clientSecret, sender, portalUrl }`, for the report emails.
 Absent: no report emails for that club. The first three come from the club's Microsoft Entra app
 registration (Entra admin centre → App registrations): tenantId is its Directory (tenant) ID, clientId
 its Application (client) ID, clientSecret a client secret created under Certificates & secrets (copy the
 secret's *Value* when it is made; it is shown once; secrets expire, so note the date). The app needs the
 **application** permission `Mail.Send` (Microsoft Graph) with admin consent granted. `portalUrl` is the
-base URL of the club's portal (the Railway portal's address), which the API calls to get the report. The
-**sender address is not here**: an admin sets it on the portal's Club settings (it is stored in
-`report_mail_settings.sender`) and it must be a real mailbox of that tenant. Recommended (IT): restrict the
+base URL of **this club's** portal (its own host when one portal serves every club), which the API calls to
+get the report. `sender` (optional) is the club's default mailbox, e.g. `reports@club.com`; the portal's Club
+settings "Send from" overrides it (stored in `report_mail_settings.sender`), and with neither set the send is
+logged as failed. It must be a real mailbox of that club's tenant. **One API for several clubs:** each club
+has its own `mail` entry (its own Entra app, sender and portal) and only ever uses its own database, so
+reports never cross clubs; the API refuses to boot if two clubs share a `portalUrl` or a `sender`.
+Recommended (IT): restrict the
 app to that one mailbox, since `Mail.Send` as an application permission can otherwise send as anyone in the
 tenant; create an Exchange application access policy
 (`New-ApplicationAccessPolicy -AppId <clientId> -PolicyScopeGroupId <group with the mailbox> -AccessRight RestrictAccess`).

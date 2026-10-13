@@ -38,10 +38,10 @@ export interface Club {
   fcmServiceAccount: FcmServiceAccount | null;
   /**
    * The report emails (src/reports): the club's Microsoft 365 app
-   * registration with the application permission Mail.Send. The address it
-   * sends from is set on Club settings (report_mail_settings.sender), not
-   * here. `portalUrl` is where the API fetches the report PDF. Absent: no
-   * report emails.
+   * registration with the application permission Mail.Send, `sender` (the
+   * club's default mailbox; Club settings' "Send from" overrides it) and
+   * `portalUrl`, where the API fetches the report PDF: this club's own portal
+   * host. Absent: no report emails.
    */
   mail: MailConfig | null;
 }
@@ -50,6 +50,8 @@ export interface MailConfig {
   tenantId: string;
   clientId: string;
   clientSecret: string;
+  /** The club's default sender; null = only Club settings' "Send from". */
+  sender: string | null;
   portalUrl: string;
 }
 
@@ -60,12 +62,16 @@ function parseMail(v: unknown, where: string): MailConfig | null {
   const ok =
     typeof m === 'object' &&
     [m.tenantId, m.clientId, m.clientSecret, m.portalUrl].every((s) => typeof s === 'string' && s.length > 0) &&
-    /^https?:\/\//.test(String(m.portalUrl));
-  if (!ok) throw new Error(`${where} must have tenantId, clientId, clientSecret and portalUrl (http/https)`);
+    /^https?:\/\//.test(String(m.portalUrl)) &&
+    (m.sender === undefined || m.sender === null || (typeof m.sender === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.sender)));
+  if (!ok) {
+    throw new Error(`${where} must have tenantId, clientId, clientSecret, portalUrl (http/https) and, optionally, sender (an address)`);
+  }
   return {
     tenantId: String(m.tenantId),
     clientId: String(m.clientId),
     clientSecret: String(m.clientSecret),
+    sender: m.sender ? String(m.sender).toLowerCase() : null,
     portalUrl: String(m.portalUrl).replace(/\/+$/, ''),
   };
 }
@@ -158,6 +164,18 @@ export function parseClubs(raw: string | undefined): Map<string, Club> {
       fcmServiceAccount: parseFcmServiceAccount(c.fcmServiceAccount, `CLUBS.${slug}.fcmServiceAccount`),
       mail: parseMail(c.mail, `CLUBS.${slug}.mail`),
     });
+  }
+  // One API for every club: two clubs sharing a portal would render one
+  // club's report with the other's sign-in, and two sharing a sender would
+  // mail as each other. Refuse at boot rather than send the wrong thing.
+  for (const field of ['portalUrl', 'sender'] as const) {
+    const seen = new Map<string, string>();
+    for (const c of clubs.values()) {
+      const v = c.mail?.[field]?.toLowerCase();
+      if (!v) continue;
+      if (seen.has(v)) throw new Error(`CLUBS: ${seen.get(v)} and ${c.slug} have the same mail.${field}`);
+      seen.set(v, c.slug);
+    }
   }
   if (clubs.size === 0) throw new Error('CLUBS has no clubs');
   return clubs;

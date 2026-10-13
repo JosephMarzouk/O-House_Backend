@@ -14,8 +14,10 @@ import { graphSend } from './graph';
  *          recipients, once across every API instance on this database
  *   send   the portal's own PDF (reports/daily/pdf), rendered signed in as
  *          the admin who saved the settings, mailed through Microsoft Graph
- *          from the club's sender address (report_mail_settings.sender),
- *          whoever saved them
+ *          from the club's sender address, whoever saved them: Club
+ *          settings' "Send from", else CLUBS.<slug>.mail.sender. Each club
+ *          uses only its own database, app and portal, so one API can serve
+ *          every club (parseClubs refuses a shared portal or sender)
  *   log    report_mail_log: sent, or failed with the reason (Club settings
  *          shows it). A failure is claimed again 5 minutes later, 3 tries.
  *
@@ -212,7 +214,8 @@ export class ReportMailService implements OnApplicationBootstrap, OnModuleDestro
 
     const rows = (must(await db.rpc('claim_report_mail', { p_start: period[0], p_end: period[1] })) ?? []) as Claimed[];
     for (const r of rows) {
-      const outcome = await this.sendOne(club, settings?.sender ?? null, r, period).then(
+      // Club settings' "Send from" first, then this club's own CLUBS default.
+      const outcome = await this.sendOne(club, settings?.sender || club.mail!.sender, r, period).then(
         () => ({ status: 'sent', error: null }),
         (e: unknown) => ({ status: 'failed', error: (e instanceof Error ? e.message : String(e)).slice(0, 500) }),
       );
@@ -229,7 +232,7 @@ export class ReportMailService implements OnApplicationBootstrap, OnModuleDestro
   }
 
   private async sendOne(club: Club, sender: string | null, r: Claimed, period: [string, string]) {
-    if (!sender) throw new Error('no sender address is set on Club settings');
+    if (!sender) throw new Error('no sender address: set "Send from" on Club settings, or mail.sender for this club in CLUBS');
     if (!r.set_by) throw new Error('nobody has saved the report settings');
     await sendReport(club, sender, this.tokens.accessToken(club, r.set_by), r, period);
   }
