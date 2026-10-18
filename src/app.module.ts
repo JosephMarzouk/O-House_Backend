@@ -12,17 +12,30 @@ import { SyncModule } from './sync/sync.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReportMailModule } from './reports/report-mail.module';
 import { ErrorsFilter } from './common/errors.filter';
+import { parseLogin } from './auth/logins';
 
 /**
  * Runs after AuthGuard, so it counts per club and user. That matters: a
  * whole club's phones share one Wi-Fi IP, and an IP limit would throttle a
- * shift's worth of reconnecting phones as one caller. Public routes fall
- * back to the IP.
+ * shift's worth of reconnecting phones as one caller.
+ *
+ * Sign-in has no user yet, so it counts per IP *and* login (F-07): the club's
+ * Wi-Fi, and the portal server (every portal sign-in arrives from its IP),
+ * are one address for many people, so an IP-only limit refused the 11th
+ * person of the minute. The per-account lock (10 wrong passwords, 15 min, in
+ * the database) still stops guessing one account from many IPs.
+ * ponytail: no IP-wide cap on sign-in, so spraying one password across many
+ * logins from one IP is bounded only by each account's lock; add a second,
+ * looser IP throttler if the clubs grow past a few hundred staff.
+ * Other public routes (refresh, logout) fall back to the IP.
  */
 @Injectable()
-class UserThrottlerGuard extends ThrottlerGuard {
+export class UserThrottlerGuard extends ThrottlerGuard {
   protected async getTracker(req: Record<string, any>): Promise<string> {
-    return req.user ? `${req.user.club.slug}:${req.user.id}` : req.ip;
+    if (req.user) return `${req.user.club.slug}:${req.user.id}`;
+    const login = parseLogin(req.body?.login);
+    // The normalized login, so "0101…" and "+20101…" count as one.
+    return login ? `${req.ip}:${'phone' in login ? login.phone : login.email}` : req.ip;
   }
 }
 

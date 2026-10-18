@@ -325,7 +325,7 @@ export class AuthController {
     private readonly clubs: ClubsService,
   ) {}
 
-  /** Tight on purpose: 10 tries a minute per IP, on top of the per-account lock. */
+  /** Tight on purpose: 10 tries a minute per IP and login (UserThrottlerGuard), on top of the per-account lock. */
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
