@@ -106,6 +106,9 @@ export async function fetchAll<T>(
   }
 }
 
+/** Statuses whose evidence is final: nothing may be uploaded into them. follow_up stays open on purpose. */
+const CLOSED = new Set(['submitted', 'approved']);
+
 @Injectable()
 export class AssignmentsService {
   constructor(
@@ -188,7 +191,12 @@ export class AssignmentsService {
     if (!isUuid(photoId)) throw refused('INVALID_FIELD', 'photoId must be a uuid');
     const { bytes, ext, contentType } = photoOrVideo(file);
     const db = this.supabase.forUser(user.club, user.jwt);
-    await this.assertAssignee(db, user, id, itemId);
+    // Before the upload, not after: the upload overwrites (upsert), so a
+    // check left to the RPC would refuse only once the evidence of a closed
+    // round was already replaced (F-06).
+    if (CLOSED.has(await this.assertAssignee(db, user, id, itemId))) {
+      throw refused('ASSIGNMENT_CLOSED', 'Assignment is closed');
+    }
     const path = photoPath(id, itemId, photoId, ext);
     await this.media.upload(user.club, path, bytes, contentType);
     must(await db.rpc('attach_item_photo', { p_item_id: itemId, p_storage_path: path }));
@@ -209,7 +217,10 @@ export class AssignmentsService {
     };
     const bytes = evidence(file, 'png');
     const db = this.supabase.forUser(user.club, user.jwt);
-    await this.assertAssignee(db, user, id);
+    // Already submitted or approved: a replay of a submit whose reply was
+    // lost. Success, as submit_assignment would answer, but nothing is
+    // written, so the stored signature can't be swapped afterwards (F-06).
+    if (CLOSED.has(await this.assertAssignee(db, user, id))) return;
     await this.media.upload(user.club, params.p_signature_path, bytes, 'image/png');
     must(await db.rpc('submit_assignment', params));
   }
@@ -221,11 +232,11 @@ export class AssignmentsService {
    * evidence into it. The RPC after the upload re-checks everything, claims
    * the round, and refuses if it is closed or someone else got there first.
    */
-  private async assertAssignee(db: SupabaseClient, user: CurrentUser, id: string, itemId?: string) {
+  private async assertAssignee(db: SupabaseClient, user: CurrentUser, id: string, itemId?: string): Promise<string> {
     const [round, item] = await Promise.all([
       db
         .from('assignments_v')
-        .select('inspector_id, inspector_name, assignee_ids')
+        .select('status, inspector_id, inspector_name, assignee_ids')
         .eq('id', id)
         .maybeSingle(),
       itemId
@@ -233,6 +244,7 @@ export class AssignmentsService {
         : Promise.resolve({ data: { id: '' }, error: null }),
     ]);
     const r = must(round) as {
+      status: string;
       inspector_id: string | null;
       inspector_name: string | null;
       assignee_ids: string[] | null;
@@ -245,6 +257,7 @@ export class AssignmentsService {
       }
     }
     if (!must(item)) throw refused('ITEM_NOT_FOUND', 'Item not found');
+    return r.status;
   }
 
   private async items(db: SupabaseClient, ids: string[]): Promise<Map<string, Item[]>> {
