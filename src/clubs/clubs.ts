@@ -182,6 +182,51 @@ export function parseClubs(raw: string | undefined): Map<string, Club> {
 }
 
 /**
+ * CLUB_ALIASES: a club that borrows another club's database and keys, e.g.
+ * {"ryze": {"of": "ohouse", "code": "RYZE", "name": {"en": "RYZE", "ar": "رايز"}}}.
+ *
+ * For the 2-week pilot (from 20 Oct 2026) RYZE and KODE run on O House's
+ * database (your decision, 18 Oct): their own app and portal and brand, the
+ * same data. An alias holds no secret of its own, so setting it never means
+ * copying O House's keys; the slug, code and issuer are its own, so a RYZE
+ * token still can't be used as O House. It gets no push and no report mail:
+ * those workers would otherwise run twice over one database.
+ * ponytail: remove the aliases once each club has its own Supabase project,
+ * and give each a real CLUBS entry (PLAN.md "Onboarding a club").
+ */
+export function addAliases(clubs: Map<string, Club>, raw: string | undefined): Map<string, Club> {
+  if (!raw) return clubs;
+  let parsed: Record<string, { of?: unknown; code?: unknown; name?: { en?: string; ar?: string } }>;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('CLUB_ALIASES is not valid JSON');
+  }
+  const codes = new Set([...clubs.values()].map((c) => c.code));
+  for (const [slug, a] of Object.entries(parsed)) {
+    if (!/^[a-z0-9-]+$/.test(slug)) throw new Error(`CLUB_ALIASES: slug "${slug}" must be lowercase letters, digits or dashes`);
+    if (clubs.has(slug)) throw new Error(`CLUB_ALIASES: "${slug}" is already a club`);
+    const base = typeof a.of === 'string' ? clubs.get(a.of) : undefined;
+    if (!base) throw new Error(`CLUB_ALIASES.${slug}.of must name a club in CLUBS`);
+    if (typeof a.code !== 'string' || !a.code) throw new Error(`CLUB_ALIASES.${slug}.code is missing`);
+    const code = a.code.toUpperCase();
+    if (codes.has(code)) throw new Error(`CLUB_ALIASES: code of "${slug}" is used by another club`);
+    codes.add(code);
+    clubs.set(slug, {
+      ...base,
+      slug,
+      code,
+      name: { en: a.name?.en ?? slug, ar: a.name?.ar ?? a.name?.en ?? slug },
+      logoUrl: null,
+      hosts: [],
+      fcmServiceAccount: null,
+      mail: null,
+    });
+  }
+  return clubs;
+}
+
+/**
  * Which club a portal host belongs to: a listed custom domain first, then
  * <slug>.<portalDomain>. Anything else is no club — a host pointed at the
  * portal that we did not configure must not borrow a club's login page.

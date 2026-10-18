@@ -1,10 +1,10 @@
 import { Controller, Get, Global, Injectable, Module, NotFoundException, Param } from '@nestjs/common';
-import { Club, clubForHost, parseClubs, PublicClub, toPublic } from './clubs';
+import { addAliases, Club, clubForHost, parseClubs, PublicClub, toPublic } from './clubs';
 import { Public } from '../auth/public.decorator';
 
 @Injectable()
 export class ClubsService {
-  private readonly bySlugMap = parseClubs(process.env.CLUBS);
+  private readonly bySlugMap = addAliases(parseClubs(process.env.CLUBS), process.env.CLUB_ALIASES);
 
   bySlug(slug: string | undefined): Club | undefined {
     return slug ? this.bySlugMap.get(slug) : undefined;

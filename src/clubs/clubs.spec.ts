@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { clubForHost, parseClubs, toPublic } from './clubs';
+import { addAliases, clubForHost, parseClubs, toPublic } from './clubs';
 
 const jwk = () => generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' });
 
@@ -155,5 +155,50 @@ describe('clubForHost', () => {
     expect(clubForHost(clubs, 'ohouse.evil.com', 'rounds.app')).toBeUndefined(); // wrong domain
     expect(clubForHost(clubs, 'x.ohouse.rounds.app', 'rounds.app')).toBeUndefined(); // no nesting
     expect(clubForHost(clubs, 'ohouse.rounds.app', undefined)).toBeUndefined(); // no PORTAL_DOMAIN set
+  });
+});
+
+describe('CLUB_ALIASES: the pilot clubs on O House database', () => {
+  const withMail = {
+    ...entry,
+    mail: { tenantId: 't', clientId: 'c', clientSecret: 's', portalUrl: 'https://portal.example.test' },
+  };
+  const ALIASES = JSON.stringify({
+    ryze: { of: 'ohouse', code: 'RYZE', name: { en: 'RYZE', ar: 'رايز' } },
+    kode: { of: 'ohouse', code: 'KODE' },
+  });
+
+  it('a club borrows the base database and keys under its own slug, code and name', () => {
+    const clubs = addAliases(parseClubs(JSON.stringify({ ohouse: withMail })), ALIASES);
+    const base = clubs.get('ohouse')!;
+    const ryze = clubs.get('ryze')!;
+    expect(ryze).toMatchObject({ slug: 'ryze', code: 'RYZE', name: { en: 'RYZE', ar: 'رايز' } });
+    expect(ryze.supabaseUrl).toBe(base.supabaseUrl);
+    expect(ryze.dbSigningKey).toBe(base.dbSigningKey);
+    expect(clubs.get('kode')!.name).toEqual({ en: 'kode', ar: 'kode' });
+  });
+
+  it('an alias runs no push and no report mail, so nothing is sent twice from one database', () => {
+    const clubs = addAliases(parseClubs(JSON.stringify({ ohouse: withMail })), ALIASES);
+    expect(clubs.get('ryze')!.mail).toBeNull();
+    expect(clubs.get('ryze')!.fcmServiceAccount).toBeNull();
+    expect(clubs.get('ohouse')!.mail).not.toBeNull();
+  });
+
+  it('its portal resolves from <slug>.<PORTAL_DOMAIN>', () => {
+    const clubs = addAliases(parseClubs(JSON.stringify({ ohouse: entry })), ALIASES);
+    expect(clubForHost(clubs.values(), 'ryze.o-house.test', 'o-house.test')?.slug).toBe('ryze');
+  });
+
+  it('no aliases set changes nothing', () => {
+    expect([...addAliases(parseClubs(JSON.stringify({ ohouse: entry })), undefined).keys()]).toEqual(['ohouse']);
+  });
+
+  it('refuses an unknown base, a taken slug or code, and bad JSON', () => {
+    const base = () => parseClubs(JSON.stringify({ ohouse: entry }));
+    expect(() => addAliases(base(), JSON.stringify({ ryze: { of: 'nope', code: 'R' } }))).toThrow('must name a club');
+    expect(() => addAliases(base(), JSON.stringify({ ohouse: { of: 'ohouse', code: 'X' } }))).toThrow('already a club');
+    expect(() => addAliases(base(), JSON.stringify({ ryze: { of: 'ohouse', code: 'ohouse' } }))).toThrow('used by another club');
+    expect(() => addAliases(base(), '{')).toThrow('not valid JSON');
   });
 });
