@@ -237,10 +237,15 @@ export class LoginsService {
     if (!ph && !em) throw bad('FIELDS_REQUIRED', 'A phone number or an email is required');
 
     const db = this.db(club);
-    const taken = await this.one<{ user_id: string }[]>(
-      db.from('user_logins').select('user_id').or([ph && `phone.eq.${ph}`, em && `email.eq."${em}"`].filter(Boolean).join(',')),
-    );
-    if (taken && taken.length > 0) throw new ConflictException({ code: 'LOGIN_TAKEN', message: 'This phone or email already signs in' });
+    // One .eq() per login, never a hand-built .or(): the typed email allows
+    // `"`, `,` and `(`, which inside an .or() string become extra filters on
+    // this secret-key table (F-05). .eq() sends the value as a parameter.
+    const takenBy = (column: 'phone' | 'email', value: string | null) =>
+      value ? this.one<{ user_id: string }[]>(db.from('user_logins').select('user_id').eq(column, value).limit(1)) : null;
+    const taken = await Promise.all([takenBy('phone', ph), takenBy('email', em)]);
+    if (taken.some((rows) => rows && rows.length > 0)) {
+      throw new ConflictException({ code: 'LOGIN_TAKEN', message: 'This phone or email already signs in' });
+    }
 
     const id = randomUUID();
     const hash = await bcrypt.hash(password, BCRYPT_COST);

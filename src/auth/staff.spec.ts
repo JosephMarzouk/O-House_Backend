@@ -15,6 +15,7 @@ const caller = { id: CALLER, jwt: 'db-jwt', club, profile: {} } as unknown as Cu
  */
 function fakeDb() {
   const inserted: Record<string, any[]> = {};
+  const calls: Array<[table: string, method: string, ...args: unknown[]]> = [];
   const from = jest.fn((table: string) => {
     let op = 'select';
     const q: any = new Proxy(
@@ -25,9 +26,10 @@ function fakeDb() {
             const data = op === 'update' ? [{ user_id: TARGET }] : table === 'user_logins' && op === 'select' ? [] : null;
             return (ok: (r: unknown) => void) => ok({ data, error: null });
           }
-          return (arg?: unknown) => {
+          return (...args: unknown[]) => {
+            calls.push([table, m, ...args]);
             if (m === 'insert' || m === 'update') op = m;
-            if (m === 'insert') (inserted[table] ??= []).push(arg);
+            if (m === 'insert') (inserted[table] ??= []).push(args[0]);
             return q;
           };
         },
@@ -35,7 +37,7 @@ function fakeDb() {
     );
     return q;
   });
-  return { db: { from }, from, inserted };
+  return { db: { from }, from, inserted, calls };
 }
 
 /** `allowed` is what can_assign_role / can_manage_user answer, as the caller. */
@@ -85,6 +87,26 @@ describe('POST /admin/staff: can_assign_role, asked as the caller, is the only r
     expect(await code(s.svc.createStaff(club, caller, { ...NEW_STAFF, roleId: 'manager' }))).toBe('400 ROLE_REQUIRED');
     expect(await code(s.svc.createStaff(club, caller, { ...NEW_STAFF, departmentId: 7 }))).toBe('400 DEPARTMENT_INVALID');
     expect(s.rpc).not.toHaveBeenCalled();
+  });
+
+  it('F-05 / USERS-01: a crafted email is looked up as a value, never spliced into an .or() filter', async () => {
+    const s = setup(true);
+    const crafted = 'q",user_id.not.is.null,email.eq."a@b.co';
+    await s.svc.createStaff(club, caller, { ...NEW_STAFF, phone: undefined, email: crafted });
+    const logins = s.calls.filter(([t]) => t === 'user_logins');
+    expect(logins.some(([, m]) => m === 'or')).toBe(false);
+    expect(logins).toContainEqual(['user_logins', 'eq', 'email', crafted]);
+    expect(s.inserted.user_logins[0]).toMatchObject({ email: crafted, phone: null });
+  });
+
+  it('checks the phone and the email each with its own lookup', async () => {
+    const s = setup(true);
+    await s.svc.createStaff(club, caller, { ...NEW_STAFF, email: 'Nour@Club.com' });
+    const eqs = s.calls.filter(([t, m]) => t === 'user_logins' && m === 'eq');
+    expect(eqs).toEqual([
+      ['user_logins', 'eq', 'phone', '+201012345678'],
+      ['user_logins', 'eq', 'email', 'nour@club.com'],
+    ]);
   });
 
   it('a database error is not a yes: it surfaces and nothing is written', async () => {
