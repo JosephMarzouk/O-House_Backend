@@ -13,6 +13,7 @@ const NO_SESSION = { persistSession: false, autoRefreshToken: false, detectSessi
 export class SupabaseService implements OnModuleInit {
   // Keyed by club slug on purpose: a client is never shared across clubs.
   private readonly authClients = new Map<string, SupabaseClient>();
+  private readonly gatewayClients = new Map<string, SupabaseClient>();
 
   constructor(private readonly clubs: ClubsService) {}
 
@@ -35,6 +36,23 @@ export class SupabaseService implements OnModuleInit {
     if (!c) {
       c = createClient(club.supabaseUrl, club.publishableKey, { auth: NO_SESSION });
       this.authClients.set(club.slug, c);
+    }
+    return c;
+  }
+
+  /**
+   * No user, but through the Data API gate: for the few public reads that
+   * have no caller yet (the app's minimum version at sign-in). Postgres sees
+   * `anon`, so only functions granted to anon answer.
+   */
+  forGateway(club: Club): SupabaseClient {
+    let c = this.gatewayClients.get(club.slug);
+    if (!c) {
+      c = createClient(club.supabaseUrl, club.publishableKey, {
+        global: { headers: { 'x-ohouse-gateway-key': club.gatewayKey } },
+        auth: NO_SESSION,
+      });
+      this.gatewayClients.set(club.slug, c);
     }
     return c;
   }

@@ -13,6 +13,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { ReportMailModule } from './reports/report-mail.module';
 import { ErrorsFilter } from './common/errors.filter';
 import { parseLogin } from './auth/logins';
+import { AppReleaseService, AppVersionGuard } from './app-release/app-release';
 
 /**
  * Runs after AuthGuard, so it counts per club and user. That matters: a
@@ -55,7 +56,9 @@ export class UserThrottlerGuard extends ThrottlerGuard {
   ],
   controllers: [HealthController],
   providers: [
-    { provide: APP_GUARD, useClass: AuthGuard }, // order matters: auth first
+    AppReleaseService,
+    { provide: APP_GUARD, useClass: AppVersionGuard }, // an old app build hears "update" before anything else
+    { provide: APP_GUARD, useClass: AuthGuard }, // order matters: auth before the throttler
     { provide: APP_GUARD, useClass: UserThrottlerGuard },
     { provide: APP_FILTER, useClass: ErrorsFilter }, // the refusal contract; records refusals
   ],
