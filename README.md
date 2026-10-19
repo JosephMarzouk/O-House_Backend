@@ -47,9 +47,27 @@ The O House backend (NestJS), and the **only** home for database migrations.
   details are in the PDF. Mail goes through Microsoft Graph (`graph.ts`, no SDK) from one mailbox per
   club, set on Club settings. Each send's outcome is in `report_mail_log`. A club without `mail` in
   `CLUBS` gets no report emails.
+- **The Data API gate (F-04, on since 18 Oct).** `pgrst.db_pre_request = private.require_gateway_key`
+  refuses every Data API request that is neither `service_role` nor carrying a known
+  `x-ohouse-gateway-key` (403 `GATEWAY_REQUIRED`). The API sends `CLUBS.<slug>.gatewayKey` on its
+  user-scoped calls, the portal `OHOUSE_GATEWAY_KEY`. Only SHA-256 hashes are stored, in
+  `private.gateway_keys` (four: local and Railway, API and portal); a new deployment needs its key's
+  hash added. Off switch: `alter role authenticator reset pgrst.db_pre_request; notify pgrst, 'reload config';`
+  (migrations `20261018140404_*`, `…140514_*`).
+- **Force update (F-11, `src/app-release/`).** The phone sends its build number as `X-App-Version`;
+  below the club's `app_release.min_build` the global `AppVersionGuard` answers 426 `UPGRADE_REQUIRED`
+  `{minBuild, updateUrl}` before anything else runs, and the app shows its Update page. Read through
+  `rpc('app_release')`, cached 60 s, and failing open (an unreadable table holds nobody back). To
+  force testers onto a new APK: raise the app's build number, then
+  `update public.app_release set min_build = N, update_url = 'https://…';`.
+- **Pilot aliases (`CLUB_ALIASES`, 18 Oct).** `{"ryze": {"of": "ohouse", "code": …, "name": …}}` runs
+  a club on another club's database (`addAliases`, `src/clubs/clubs.ts`): its own slug, code and token
+  issuer, no push, no mail, no portal host. For the pilot only: RYZE and KODE use O House's database
+  until they have their own. Remove it then.
 - **Errors (`src/common/errors.filter.ts`).** Phones rely on this contract:
   - **422 `{refused: true, code}`:** only a known business refusal. The phone parks the op.
   - **401:** sign in again.
+  - **426 `UPGRADE_REQUIRED`:** this build is too old; queued work waits for the update.
   - **Everything else, 503:** retry; the phone never drops the work.
 
 | Route | |
@@ -66,7 +84,7 @@ The O House backend (NestJS), and the **only** home for database migrations.
 | `GET /assignments` | The phone's offline set: the last 7 days (Cairo), every future date, open follow-ups. Items included, paged past PostgREST's 1000-row cap. |
 | `GET /assignments/:id` | One round, if RLS lets you see it, plus signed links (1 h) for its photos and signature |
 | `POST /assignments/:id/items/:itemId/answer` | `{answer?, note?}` → `mark_item_done` |
-| `POST /assignments/:id/items/:itemId/photos` | Multipart `file` + `photoId` (uuid): a JPEG (≤ 5 MB) or an MP4 video from the camera (≤ 50 MB, checked by its `ftyp` bytes). The API stores it at `photos/{id}/{itemId}-{photoId}.jpg` or `.mp4`, then `attach_item_photo` |
+| `POST /assignments/:id/items/:itemId/photos` | Multipart `file` + `photoId` (uuid): a JPEG (≤ 5 MB) or an MP4 video from the camera (≤ 1 MB, 19 Oct: app build 2 shrinks each clip to fit, so deploy this limit only once every phone runs build 2; checked by its `ftyp` bytes; bigger is 422 `FILE_TOO_LARGE`). The API stores it at `photos/{id}/{itemId}-{photoId}.jpg` or `.mp4`, then `attach_item_photo` |
 | `POST /assignments/:id/submit` | Multipart `file` (PNG, ≤ 1 MB), `signatureId`, `completedAt` (ISO-8601 **with offset**), `note?` → `submit_assignment` |
 | `PATCH /me/locale` | `set_locale`. (No password route: staff never change their password in the app; only an admin sets it, in the portal.) The language pushes are written in |
 | `PUT /me/devices` | `{token, platform: android\|ios}` → `register_device_token`: the phone's FCM token now belongs to the caller (a shared phone changes hands) |
@@ -141,8 +159,8 @@ npx supabase migration list       # local and remote must match
   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
   ```
 
-  Its SHA-256 is inserted into `private.gateway_keys` when the gate ships (Step 4). Never commit the
-  key.
+  Its SHA-256 goes into `private.gateway_keys` (the gate is on since 18 Oct: see "How it works").
+  Never commit the key or its hash.
 
 ## Keys (own sign-in, per club)
 
