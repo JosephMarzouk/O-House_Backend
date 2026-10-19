@@ -1,4 +1,13 @@
-import { AssignmentsService, cairoDate, completedAt, evidence, fetchAll, optionalText, photoOrVideo } from './assignments.module';
+import {
+  AssignmentsService,
+  cairoDate,
+  completedAt,
+  evidence,
+  fetchAll,
+  MAX_VIDEO_BYTES,
+  optionalText,
+  photoOrVideo,
+} from './assignments.module';
 import { photoPath, signaturePath, toBucketPath } from '../media/media.module';
 
 describe('toBucketPath', () => {
@@ -80,9 +89,15 @@ describe('phone input: an app bug is refused (parked), never retried forever', (
     const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypisom'), Buffer.alloc(8)]);
     expect(photoOrVideo({ buffer: jpeg, size: 5 })).toMatchObject({ ext: 'jpg', contentType: 'image/jpeg' });
     expect(photoOrVideo({ buffer: mp4, size: mp4.length })).toMatchObject({ ext: 'mp4', contentType: 'video/mp4' });
-    // A 6 MB "photo" is refused even though the route admits 50 MB for video.
+    // A photo up to 5 MB passes; a 6 MB one is refused.
+    const fiveMbJpeg = Buffer.concat([jpeg, Buffer.alloc(5 * 1024 * 1024 - jpeg.length)]);
+    expect(photoOrVideo({ buffer: fiveMbJpeg, size: fiveMbJpeg.length }).ext).toBe('jpg');
     const bigJpeg = Buffer.concat([jpeg, Buffer.alloc(6 * 1024 * 1024)]);
     expect(code(() => photoOrVideo({ buffer: bigJpeg, size: bigJpeg.length }))).toBe('FILE_TOO_LARGE');
+    // Video is at most 1 MB (19 Oct 2026): exactly 1 MB passes, a byte more is refused.
+    const mp4Of = (n: number) => Buffer.concat([mp4, Buffer.alloc(n - mp4.length)]);
+    expect(photoOrVideo({ buffer: mp4Of(MAX_VIDEO_BYTES), size: MAX_VIDEO_BYTES }).ext).toBe('mp4');
+    expect(code(() => photoOrVideo({ buffer: mp4Of(MAX_VIDEO_BYTES + 1), size: MAX_VIDEO_BYTES + 1 }))).toBe('FILE_TOO_LARGE');
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(code(() => photoOrVideo({ buffer: png, size: png.length }))).toBe('INVALID_FILE');
     expect(code(() => photoOrVideo(undefined))).toBe('INVALID_FILE');

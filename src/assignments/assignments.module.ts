@@ -24,14 +24,13 @@ type Item = Row & { assignment_id: string; photo_paths: string[] | null };
 
 const PAGE = 1000; // PostgREST's default max-rows: past it a response is cut SILENTLY
 const IDS_PER_REQUEST = 50;
-// The phone compresses to a 1600 px long edge (~300 KB); these only stop abuse.
+// The phone compresses to a 1600 px long edge (~300 KB); this only stops abuse.
+// It is also the evidence route's upload ceiling, the larger of the two.
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
-// A camera clip of at most 30 s (the app's maxDuration). image_picker cannot
-// compress video. 50 MB is also the bucket's limit (Supabase's default
-// project-wide upload limit), so raising one means raising both.
-// ponytail: multer holds the upload in memory; switch the evidence route to
-// disk storage if several phones upload clips at once.
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+// Video evidence is at most 1 MB (business rule, 19 Oct 2026): the app
+// shrinks each clip to fit before keeping it (o_house_app's
+// lib/video_shrink.dart, maxVideoBytes), so the two move together.
+export const MAX_VIDEO_BYTES = 1024 * 1024;
 const MAX_SIGNATURE_BYTES = 1024 * 1024;
 const MAX_TEXT = 2000;
 
@@ -69,6 +68,9 @@ export function photoOrVideo(file: Upload): { bytes: Buffer; ext: 'jpg' | 'mp4';
     return { bytes: b, ext: 'jpg', contentType: 'image/jpeg' };
   }
   if (b && b.length > 12 && b.toString('latin1', 4, 8) === 'ftyp') {
+    // A clip from an app older than build 2 (no shrinking) lands here, parks
+    // on the phone, and is recorded again once the phone has updated.
+    if (b.length > MAX_VIDEO_BYTES) throw refused('FILE_TOO_LARGE', 'Video is larger than 1 MB: record a shorter clip');
     return { bytes: b, ext: 'mp4', contentType: 'video/mp4' };
   }
   throw refused('INVALID_FILE', 'Expected a JPEG photo or an MP4 video');
@@ -310,8 +312,8 @@ export class AssignmentsController {
   }
 
   @Post(':id/items/:itemId/photos')
-  // The larger ceiling here; photoOrVideo() then holds a JPEG to MAX_PHOTO_BYTES.
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_VIDEO_BYTES, files: 1 } }))
+  // The larger ceiling here; photoOrVideo() then holds a clip to MAX_VIDEO_BYTES.
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_PHOTO_BYTES, files: 1 } }))
   photo(
     @User() user: CurrentUser,
     @Param('id', Uuid) id: string,
