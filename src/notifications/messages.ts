@@ -18,6 +18,10 @@ export interface RoundInfo {
   scheduled_date: string | null; // YYYY-MM-DD
   window_start: string | null; // HH:MM:SS
   deadline: string | null; // timestamptz
+  // The multi-place task it belongs to (a zone round or a one-off task), if any.
+  group_id?: string | null;
+  group_title_en?: string | null;
+  group_title_ar?: string | null;
 }
 
 export interface Params {
@@ -68,6 +72,8 @@ const COPY = {
   en: {
     E1: 'New round',
     E1many: 'New rounds',
+    E1task: 'New task',
+    places: (n: number) => `${n} places`,
     E3: 'Due soon',
     E4: 'Overdue',
     E5: 'Sent back',
@@ -82,6 +88,9 @@ const COPY = {
   ar: {
     E1: 'جولة جديدة',
     E1many: 'جولات جديدة',
+    E1task: 'مهمة جديدة',
+    // Arabic counts: 2 is the dual, 3–10 a plural, 11+ a singular accusative.
+    places: (n: number) => (n === 2 ? 'مكانان' : n <= 10 ? `${n} أماكن` : `${n} مكانًا`),
     E3: 'اقترب موعد الإغلاق',
     E4: 'تأخرت الجولة',
     E5: 'أُعيدت للتعديل',
@@ -97,7 +106,9 @@ const COPY = {
 
 /**
  * One push's title and body. `count` > 1 only for E1, when one planner save
- * gave the same person several rounds (one summary, not a burst).
+ * gave the same person several rounds (one summary, not a burst). `task`:
+ * those rounds are the places of one multi-place task (QG), so the push
+ * names the task: "New task: Morning zone (3 places)".
  */
 export function render(
   event: Event,
@@ -106,11 +117,16 @@ export function render(
   params: Params,
   count: number,
   now: Date,
+  task = false,
 ): { title: string; body: string } {
   const c = COPY[locale];
   const name = round ? roundName(locale, round) : '';
   switch (event) {
     case 'E1':
+      if (task && round) {
+        const title = pick(locale, round.group_title_en ?? null, round.group_title_ar ?? null) || name;
+        return { title: c.E1task, body: `${title} (${c.places(count)})` };
+      }
       if (count > 1 || !round) return { title: c.E1many, body: c.many(count) };
       return {
         title: c.E1,
@@ -134,9 +150,17 @@ export function render(
 /**
  * The tap target (PN-7). Staff open the round; a manager's copy (E4's
  * second one, E8) opens Home, since the round isn't in a manager's own list;
- * several new rounds open the Tasks tab.
+ * several new rounds open the Tasks tab, and one multi-place task its task
+ * screen (`groupId`; an app build before QR places ignores it and opens).
  */
-export function pushData(event: Event, assignmentId: string | null, params: Params, count: number): Record<string, string> {
+export function pushData(
+  event: Event,
+  assignmentId: string | null,
+  params: Params,
+  count: number,
+  groupId: string | null = null,
+): Record<string, string> {
+  if (event === 'E1' && groupId) return { event, open: 'group', groupId };
   const open = event === 'E8' || params.manager ? 'home' : event === 'E1' && count > 1 ? 'tasks' : 'task';
   return { event, open, ...(open === 'task' && assignmentId ? { assignmentId } : {}) };
 }

@@ -118,7 +118,7 @@ export class ErrorsFilter implements ExceptionFilter {
     void this.supabase
       .forUser(user.club, user.jwt)
       .rpc('record_sync_refusal', {
-        p_op: req.path.split('/').pop() || req.path, // answer | photos | submit | locale
+        p_op: req.path.split('/').pop() || req.path, // answer | photos | submit | scan | locale
         p_code: r.code,
         p_message: r.message,
         p_assignment_id: isUuid(id) ? id : null,

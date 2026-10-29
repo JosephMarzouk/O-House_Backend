@@ -57,6 +57,7 @@ export interface Group {
   recipient: string;
   event: Event;
   assignmentId: string | null;
+  assignmentIds: string[];
   params: Params;
   attempts: number;
   createdAt: string;
@@ -74,7 +75,8 @@ const CLAIM = 100; // keeps the follow-up `in (...)` lists well inside a URL
 const MAX_ATTEMPTS = 5; // claim_notifications stops re-claiming at 5 too
 const STALE_MS = 60 * 60_000;
 const DEFAULT_LOCALE: Locale = 'ar'; // the club's staff; profiles.locale is null until someone picks one
-const ROUND_COLUMNS = 'id, title_en, title_ar, site_name_en, site_name_ar, scheduled_date, window_start, deadline';
+const ROUND_COLUMNS =
+  'id, title_en, title_ar, site_name_en, site_name_ar, scheduled_date, window_start, deadline, group_id, group_title_en, group_title_ar';
 
 /** E1 rows from one transaction (a planner save) become one summary per person; the rest stay one each. */
 export function groupRows(rows: Row[]): Group[] {
@@ -85,6 +87,7 @@ export function groupRows(rows: Row[]): Group[] {
     const g = groups.get(key);
     if (g) {
       g.ids.push(r.id);
+      if (r.assignment_id) g.assignmentIds.push(r.assignment_id);
       g.count += 1;
       g.attempts = Math.max(g.attempts, r.attempts);
     } else {
@@ -93,6 +96,7 @@ export function groupRows(rows: Row[]): Group[] {
         recipient: r.recipient_id,
         event: r.event,
         assignmentId: r.assignment_id,
+        assignmentIds: r.assignment_id ? [r.assignment_id] : [],
         params,
         attempts: r.attempts,
         createdAt: r.created_at,
@@ -101,6 +105,21 @@ export function groupRows(rows: Row[]): Group[] {
     }
   }
   return [...groups.values()];
+}
+
+/**
+ * The multi-place task an E1 summary is about (QG: one push per task), or
+ * null. Only when every round in it belongs to the same task: a planner save
+ * spanning several tasks keeps today's one "N new rounds" summary rather
+ * than a burst of pushes, and a single checklist keeps its own push. Read
+ * at send time, since schedule_rounds and create_task_group set round_id /
+ * task_group_id just after the insert that queued the row.
+ */
+export function taskOf(g: Group, roundById: Map<string, RoundInfo>): string | null {
+  if (g.event !== 'E1' || g.count < 2 || g.assignmentIds.length !== g.count) return null;
+  const tasks = new Set(g.assignmentIds.map((id) => roundById.get(id)?.group_id ?? null));
+  const [only] = tasks;
+  return tasks.size === 1 && only ? only : null;
 }
 
 /** 30 s, 1, 2, 4 min. `attempts` already counts this claim. */
@@ -161,7 +180,7 @@ export class NotificationsService implements OnApplicationBootstrap, OnModuleDes
 
     const groups = groupRows(rows);
     const recipients = [...new Set(groups.map((g) => g.recipient))];
-    const roundIds = [...new Set(groups.map((g) => g.assignmentId).filter((id): id is string => !!id))];
+    const roundIds = [...new Set(groups.flatMap((g) => g.assignmentIds))];
     const [rounds, profiles, tokens] = await Promise.all([
       roundIds.length
         ? db.from('assignments_v').select(ROUND_COLUMNS).in('id', roundIds).then(must)
@@ -181,8 +200,9 @@ export class NotificationsService implements OnApplicationBootstrap, OnModuleDes
       const stale = now.getTime() - new Date(g.createdAt).getTime() > STALE_MS;
       const round = g.assignmentId ? (roundById.get(g.assignmentId) ?? null) : null;
       const locale: Locale = localeOf.get(g.recipient) === 'en' ? 'en' : localeOf.get(g.recipient) === 'ar' ? 'ar' : DEFAULT_LOCALE;
-      const text = render(g.event, locale, round, g.params, g.count, now);
-      const data = pushData(g.event, g.assignmentId, g.params, g.count);
+      const task = taskOf(g, roundById);
+      const text = render(g.event, locale, round, g.params, g.count, now, !!task);
+      const data = pushData(g.event, g.assignmentId, g.params, g.count, task);
       // A row queued over an hour ago (the worker was off) is old news.
       const devices = stale || (g.assignmentId && !round) ? [] : (tokensOf.get(g.recipient) ?? []);
       return { g, text, stale, messages: devices.map((token): PushMessage => ({ token, ...text, data })) };

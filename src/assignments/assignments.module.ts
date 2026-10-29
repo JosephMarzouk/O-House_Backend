@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Injectable,
   Module,
   NotFoundException,
@@ -77,12 +78,23 @@ export function photoOrVideo(file: Upload): { bytes: Buffer; ext: 'jpg' | 'mp4';
 }
 
 /** SY-7: the capture time must carry its offset, or "before the deadline" is ambiguous by hours. */
-export function completedAt(v: unknown): string {
+export function completedAt(v: unknown, field = 'completedAt'): string {
   const ok =
     typeof v === 'string' &&
     /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)$/.test(v) &&
     !Number.isNaN(Date.parse(v));
-  if (!ok) throw refused('INVALID_FIELD', 'completedAt must be ISO-8601 with an offset');
+  if (!ok) throw refused('INVALID_FIELD', `${field} must be ISO-8601 with an offset`);
+  return v;
+}
+
+// A place's code is 32 hex characters; this only keeps junk out of the log.
+const MAX_CODE = 200;
+
+/** The text a QR carried, after the app took off `clubops:<club>:`. Empty or huge is the app's bug. */
+export function scanCode(v: unknown): string {
+  if (typeof v !== 'string' || v.length === 0 || v.length > MAX_CODE) {
+    throw refused('INVALID_FIELD', `code must be text of 1 to ${MAX_CODE} characters`);
+  }
   return v;
 }
 
@@ -228,6 +240,24 @@ export class AssignmentsService {
   }
 
   /**
+   * A QR scan at a place, made offline and queued before that place's
+   * answers. The server only logs it ('scan' or 'bad_code', never refused
+   * for a wrong code: the lock is the app's, Q10); a good code claims the
+   * whole task. scanId makes a replay return the first result.
+   */
+  async scan(user: CurrentUser, id: string, body: { code?: unknown; scannedAt?: unknown; scanId?: unknown }) {
+    if (!isUuid(body?.scanId)) throw refused('INVALID_FIELD', 'scanId must be a uuid');
+    const params = {
+      p_assignment_id: id,
+      p_code: scanCode(body.code),
+      p_scanned_at: completedAt(body.scannedAt, 'scannedAt'),
+      p_client_id: body.scanId,
+    };
+    const result = must(await this.supabase.forUser(user.club, user.jwt).rpc('record_place_scan', params)) as string;
+    return { result };
+  }
+
+  /**
    * Authorizes the secret-key upload that follows: the round (and item) must
    * be readable as the user, and theirs — owned by them, or given to them and
    * not yet claimed. A manager can read a report's round but must not write
@@ -333,6 +363,16 @@ export class AssignmentsController {
     @UploadedFile() file: Upload,
   ) {
     return this.assignments.submit(user, id, body, file);
+  }
+
+  @Post(':id/scan')
+  @HttpCode(200)
+  scan(
+    @User() user: CurrentUser,
+    @Param('id', Uuid) id: string,
+    @Body() body: { code?: unknown; scannedAt?: unknown; scanId?: unknown },
+  ) {
+    return this.assignments.scan(user, id, body);
   }
 }
 

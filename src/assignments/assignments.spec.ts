@@ -7,8 +7,11 @@ import {
   MAX_VIDEO_BYTES,
   optionalText,
   photoOrVideo,
+  scanCode,
 } from './assignments.module';
 import { photoPath, signaturePath, toBucketPath } from '../media/media.module';
+import { classifyRefusal } from '../common/errors.filter';
+import { UpstreamError } from '../common/upstream';
 
 describe('toBucketPath', () => {
   const B = 'checklist-media';
@@ -164,5 +167,77 @@ describe('F-06 / PLAT-01: evidence of a closed round cannot be replaced', () => 
     await s.svc.submit(s.user, ROUND, { signatureId: CAPTURE, completedAt: '2026-10-18T10:00:00+03:00' }, png);
     expect(s.upload).toHaveBeenCalledTimes(2);
     expect(s.rpc.mock.calls.map(([name]) => name)).toEqual(['attach_item_photo', 'submit_assignment']);
+  });
+});
+
+describe('POST /assignments/:id/scan: a QR scan is logged as the user, never refused for a wrong code', () => {
+  const ROUND = '22222222-2222-2222-2222-222222222222';
+  const SCAN = '55555555-5555-5555-5555-555555555555';
+  const user = { id: 'u1', jwt: 'jwt', club: { slug: 'a' } } as any;
+  const body = { code: 'a3f1c2d4e5f60718293a4b5c6d7e8f90', scannedAt: '2026-10-28T09:15:00+03:00', scanId: SCAN };
+
+  function setup(reply: { data: unknown; error: { message: string } | null }) {
+    const rpc = jest.fn(async (_name: string, _args?: unknown) => reply);
+    const svc = new AssignmentsService({ forUser: () => ({ rpc }) } as any, {} as any);
+    return { svc, rpc };
+  }
+  const refusal = (p: Promise<unknown>) =>
+    p.then(
+      () => 'OK',
+      (e: any) => e.getResponse?.().code ?? e.message,
+    );
+
+  it('sends the scan to record_place_scan and returns its answer', async () => {
+    const s = setup({ data: 'scan', error: null });
+    expect(await s.svc.scan(user, ROUND, body)).toEqual({ result: 'scan' });
+    expect(s.rpc).toHaveBeenCalledWith('record_place_scan', {
+      p_assignment_id: ROUND,
+      p_code: body.code,
+      p_scanned_at: body.scannedAt,
+      p_client_id: SCAN,
+    });
+  });
+
+  it('a wrong code is a logged bad_code, not a refusal', async () => {
+    expect(await setup({ data: 'bad_code', error: null }).svc.scan(user, ROUND, { ...body, code: 'old-sticker' })).toEqual({
+      result: 'bad_code',
+    });
+  });
+
+  it('a replay sends the same scanId, so the database answers with the first result', async () => {
+    const s = setup({ data: 'scan', error: null });
+    await s.svc.scan(user, ROUND, body);
+    await s.svc.scan(user, ROUND, body);
+    expect(s.rpc.mock.calls.map(([, args]) => (args as { p_client_id: string }).p_client_id)).toEqual([SCAN, SCAN]);
+  });
+
+  it.each([
+    [{ ...body, scanId: 'nope' }, 'scanId'],
+    [{ ...body, scanId: undefined }, 'scanId'],
+    [{ ...body, scannedAt: '2026-10-28T09:15:00' }, 'scannedAt'], // no offset
+    [{ ...body, code: '' }, 'code'],
+    [{ ...body, code: 42 }, 'code'],
+    [{ ...body, code: 'x'.repeat(201) }, 'code'],
+  ])('refuses a malformed body (%#: %s) before the database is asked', async (bad, field) => {
+    const s = setup({ data: 'scan', error: null });
+    const err = await s.svc.scan(user, ROUND, bad).catch((e: any) => e.getResponse());
+    expect(err).toMatchObject({ refused: true, code: 'INVALID_FIELD' });
+    expect(err.message).toContain(field);
+    expect(s.rpc).not.toHaveBeenCalled();
+  });
+
+  it('scanCode takes a code up to 200 characters', () => {
+    expect(scanCode('a'.repeat(200))).toHaveLength(200);
+  });
+
+  it("someone else already owns the task: the RPC's ASSIGNMENT_TAKEN is a refusal (parked), like answer and photo", async () => {
+    const s = setup({ data: null, error: { message: 'ASSIGNMENT_TAKEN: Badr' } });
+    const e = await s.svc.scan(user, ROUND, body).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(UpstreamError);
+    expect(classifyRefusal((e as Error).message)).toBe('ASSIGNMENT_TAKEN');
+    expect(await refusal(setup({ data: null, error: { message: 'Not authorized' } }).svc.scan(user, ROUND, body))).toBe(
+      'Not authorized',
+    );
+    expect(classifyRefusal('Assignment not found')).toBe('ASSIGNMENT_NOT_FOUND');
   });
 });

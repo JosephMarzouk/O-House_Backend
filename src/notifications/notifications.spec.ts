@@ -1,7 +1,7 @@
 import { Club } from '../clubs/clubs';
 import { classify, Delivery, PushMessage } from './fcm';
 import { pushData, render, RoundInfo, when } from './messages';
-import { backoffMs, groupRows, NotificationsService, Row, settle } from './notifications.module';
+import { backoffMs, groupRows, NotificationsService, Row, settle, taskOf } from './notifications.module';
 
 const NOW = new Date('2026-10-12T08:00:00Z'); // 11:00 in Cairo
 
@@ -180,4 +180,66 @@ describe('NotificationsService.work', () => {
     // No profile locale: the club default, Arabic.
     expect((db.writes.find((w) => w.ids[0] === 3)!.value as { title: string }).title).toBe('تأخرت الجولة');
   });
+});
+
+describe('E1 for a multi-place task (QG): one push per task, opening it', () => {
+  const place = (id: string, group: string | null): RoundInfo => ({
+    ...round,
+    id,
+    group_id: group,
+    group_title_en: group ? 'Morning zone' : null,
+    group_title_ar: group ? 'المنطقة الصباحية' : null,
+  });
+  const byId = (...rs: RoundInfo[]) => new Map(rs.map((r) => [r.id, r]));
+  const e1 = (id: number, a: string, over: Partial<Row> = {}) => row({ id, assignment_id: a, params: { txid: '9' }, ...over });
+
+  it('names the task and counts its places, in both languages', () => {
+    const r = place('a1', 'g1');
+    expect(render('E1', 'en', r, {}, 3, NOW, true)).toEqual({ title: 'New task', body: 'Morning zone (3 places)' });
+    expect(render('E1', 'ar', r, {}, 3, NOW, true)).toEqual({ title: 'مهمة جديدة', body: 'المنطقة الصباحية (3 أماكن)' });
+    expect(render('E1', 'ar', r, {}, 2, NOW, true).body).toBe('المنطقة الصباحية (مكانان)');
+    expect(pushData('E1', 'a1', {}, 3, 'g1')).toEqual({ event: 'E1', open: 'group', groupId: 'g1' });
+  });
+
+  it('a save whose rounds all share one task is that task; anything else keeps today’s push', () => {
+    const [g] = groupRows([e1(1, 'a1'), e1(2, 'a2'), e1(3, 'a3')]);
+    expect(taskOf(g, byId(place('a1', 'g1'), place('a2', 'g1'), place('a3', 'g1')))).toBe('g1');
+    // two tasks (a week of the planner) or a task plus a lone checklist: one summary, as before
+    expect(taskOf(g, byId(place('a1', 'g1'), place('a2', 'g1'), place('a3', 'g2')))).toBeNull();
+    expect(taskOf(g, byId(place('a1', 'g1'), place('a2', 'g1'), place('a3', null)))).toBeNull();
+    // a single checklist, even one place of a task: its own push
+    const [one] = groupRows([e1(4, 'a1')]);
+    expect(taskOf(one, byId(place('a1', 'g1')))).toBeNull();
+    // other events never
+    const [e3] = groupRows([row({ id: 5, event: 'E3' })]);
+    expect(taskOf(e3, byId(place('a1', 'g1')))).toBeNull();
+  });
+
+  it('the worker sends one push for the task and writes it on every row', async () => {
+    const db = fakeDb({
+      claim_notifications: [e1(1, 'a1'), e1(2, 'a2'), e1(3, 'a3'), row({ id: 4, assignment_id: 'b1', params: { txid: '10' } })],
+      assignments_v: [place('a1', 'g1'), place('a2', 'g1'), place('a3', 'g1'), place('b1', null)],
+      profiles: [{ id: 'u1', locale: 'en' }],
+      device_tokens: [{ user_id: 'u1', fcm_token: 't1' }],
+    });
+    const { svc, sent } = service(db, (m) => m.map(() => 'sent'));
+    await svc.work(club, NOW);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({ title: 'New task', body: 'Morning zone (3 places)', data: { event: 'E1', open: 'group', groupId: 'g1' } });
+    // the lone checklist is untouched
+    expect(sent[1]).toMatchObject({ title: 'New round', data: { event: 'E1', open: 'task', assignmentId: 'b1' } });
+    expect(db.writes.find((w) => w.table === 'notifications' && w.ids.length === 3)?.ids).toEqual([1, 2, 3]);
+  });
+
+  const club = { slug: 'ohouse' } as Club;
+  function service(db: ReturnType<typeof fakeDb>, send: (m: PushMessage[]) => Delivery[]) {
+    const sent: PushMessage[] = [];
+    const svc = new NotificationsService(
+      { all: () => [] } as never,
+      { for: () => db } as never,
+      async (_c, messages) => (sent.push(...messages), send(messages)),
+    );
+    return { svc, sent };
+  }
 });
