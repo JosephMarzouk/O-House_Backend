@@ -128,6 +128,25 @@ npx supabase db pull              # writes <timestamp>_remote_schema.sql = the l
 npx supabase migration list       # local and remote must match
 ```
 
+## QR-locked places (migrations `20261028123023_qr_places`, `…140223_task_walk_order`)
+
+A place's checklist opens only after the phone scans that place's printed QR. The plan of record and
+the Q-decisions live in the migration headers. What the API carries:
+
+- **Database:** `templates.qr_required` / `templates.qr_code` (16 random bytes, unique); `task_groups`
+  (one-off multi-place tasks) with `submissions.task_group_id` and `submissions.group_position`;
+  `place_scans` (kind `scan` / `bad_code` / `unlock`, deduplicated by `client_id`); `assignments_v`
+  grew `qr_required`, `group_id`, `group_position`, `qr_hash` (sha256 of the place's code, via
+  security-definer `private.place_qr_hash`) and `unlocked`.
+- **RPCs** (called through the scan route or the portal, all `SECURITY DEFINER`):
+  `record_place_scan` (a 200 whatever the verdict; a good code claims the checklist and every
+  unclaimed sibling of the task — `ASSIGNMENT_TAKEN` when the first-claimer race is lost),
+  `unlock_place` (`private.require('assignments.unlock_place')` then the scope helper; logs `unlock`),
+  `replace_place_qr` (`places.edit`; new code, old sticker dead), `create_task_group`
+  (`checklists.create`; places in walk order, one transaction for one push per task).
+- **HTTP:** `POST /assignments/:id/scan` (staff's own scan, through the outbox). Enforcement stays
+  app-only (Q10): the server logs scans, never refuses an answer or submit over them.
+
 ## Roles (migrations `20260929125516`, `…125625`, `…162634`)
 
 - **Defaults, seeded to match the old four:** Admin (locked, whole club, everything except "Staff
