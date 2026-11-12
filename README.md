@@ -147,6 +147,26 @@ the Q-decisions live in the migration headers. What the API carries:
 - **HTTP:** `POST /assignments/:id/scan` (staff's own scan, through the outbox). Enforcement stays
   app-only (Q10): the server logs scans, never refuses an answer or submit over them.
 
+## Same place in several periods, and when a checklist opens (migration `20261112135440_place_periods_opens_at`)
+
+- **A place may repeat** in a round template or a multi-place task, each time in its own period
+  (the bathrooms four times in a morning round). Two periods of one place may not overlap; back to
+  back (08:00–09:00, 09:00–10:00) is fine, and an end at or before its start runs overnight. The
+  rule is `private.place_windows_overlap(places jsonb)`; `create_task_group` raises
+  `PLACE_WINDOW_OVERLAP` (it used to raise `DUPLICATE_PLACE` for any repeat), and a trigger on
+  `round_templates` (`round_templates_places_check`) raises the same, since the portal writes that
+  table directly.
+- **`schedule_rounds` makes one checklist per entry:** each place's entries are numbered in list
+  order and an entry is created only while the round has fewer checklists of that place, so saving a
+  planner cell twice still creates nothing twice. New round checklists store `group_position`.
+- **`assignments_v.opens_at`** = `scheduled_date + window_start` in Cairo (the first day of a
+  multi-day task); `GET /assignments` passes it through (`select('*')`). The app keeps a checklist
+  shut until 5 minutes before it, even after a QR scan. Like QR, this is app-only: the server
+  refuses no early answer or submit.
+- `set_report_mail` stays within the caller's scope (`20261112131629_report_mail_scope`): frequency,
+  sender and the "all departments" list need whole-club scope; a department's list only that
+  department's scope.
+
 ## Roles (migrations `20260929125516`, `…125625`, `…162634`)
 
 - **Defaults, seeded to match the old four:** Admin (locked, whole club, everything except "Staff
